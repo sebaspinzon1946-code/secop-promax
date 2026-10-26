@@ -1,0 +1,8 @@
+Plaintext
+
+streamlit
+pandas
+supabase
+openpyxl
+python-dotenv
+reportlab
