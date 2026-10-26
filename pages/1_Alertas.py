@@ -45,7 +45,7 @@ def resaltar_urgencia(val):
     return ''
 
 st.dataframe(
-    df_alertas.style.applymap(resaltar_urgencia, subset=['Cierre Observaciones', 'Cierre de Ofertas']),
+    df_alertas.style.map(resaltar_urgencia, subset=['Cierre Observaciones', 'Cierre de Ofertas']),
     use_container_width=True,
     hide_index=True
 )
