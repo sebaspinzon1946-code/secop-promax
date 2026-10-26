@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
+from supabase import create_client
 
 st.set_page_config(page_title="Alertas SECOP II", page_icon="📅", layout="wide")
 
@@ -23,31 +24,69 @@ st.divider()
 # ==========================================
 st.subheader("🚨 Cronograma de Procesos Actuales")
 
-# Datos estructurados basados en tu operación local
-datos = {
-    "Expediente": ["FDL-CB-001-2026", "FDL-ENG-004-2026", "UT-CE-010-2026"],
-    "Entidad": ["Alcaldía Local Ciudad Bolívar", "Alcaldía Local Engativá", "Secretaría de Desarrollo"],
-    "Etapa Actual": ["Borrador", "Presentación Ofertas", "Evaluación"],
-    "Cierre Observaciones": [date.today() + timedelta(days=1), date.today() - timedelta(days=3), date.today() - timedelta(days=15)],
-    "Cierre de Ofertas": [date.today() + timedelta(days=10), date.today() + timedelta(days=2), date.today() - timedelta(days=5)],
-}
+@st.cache_resource
+def conectar_bd():
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-df_alertas = pd.DataFrame(datos)
+supabase = conectar_bd()
 
-# Aplicar un estilo visual para destacar fechas cercanas
-def resaltar_urgencia(val):
-    if isinstance(val, date):
-        diferencia = (val - date.today()).days
-        if 0 <= diferencia <= 3:
-            return 'background-color: #ffcccc; color: #990000; font-weight: bold' # Rojo (Urgente)
-        elif 3 < diferencia <= 7:
-            return 'background-color: #fff0b3; color: #997300' # Amarillo (Atención)
-    return ''
+try:
+    # Cambia "procesos_secop" por el nombre exacto de tu tabla en Supabase
+    respuesta = supabase.table("procesos_secop").select("*").execute()
+    df_alertas = pd.DataFrame(respuesta.data)
+    
+    if not df_alertas.empty:
+        df_alertas['Cierre Observaciones'] = pd.to_datetime(df_alertas['Cierre Observaciones']).dt.date
+        df_alertas['Cierre de Ofertas'] = pd.to_datetime(df_alertas['Cierre de Ofertas']).dt.date
+        
+        st.dataframe(
+            df_alertas.style.map(resaltar_urgencia, subset=['Cierre Observaciones', 'Cierre de Ofertas']),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Aún no hay procesos registrados en la base de datos.")
+except Exception as e:
+    st.error(f"Error de conexión: {e}")
 
-st.dataframe(
-    df_alertas.style.map(resaltar_urgencia, subset=['Cierre Observaciones', 'Cierre de Ofertas']),
-    use_container_width=True,
-    hide_index=True
-)
+st.divider()
 
-st.info("💡 En la siguiente fase, conectaremos este tablero directamente con Supabase para que las fechas se actualicen automáticamente sin necesidad de Excel.")
+# ==========================================
+# 3. FORMULARIO DE INGRESO DE PROCESOS
+# ==========================================
+with st.expander("➕ Agregar nueva licitación al sistema"):
+    with st.form("form_nuevo_proceso", clear_on_submit=True):
+        st.markdown("### Datos del proceso SECOP II")
+        
+        col1, col2 = st.columns(2)
+        expediente = col1.text_input("Número de Expediente (Ej. FDL-CB-001-2026)")
+        entidad = col2.text_input("Entidad Contratante")
+        
+        col3, col4, col5 = st.columns(3)
+        etapa = col3.selectbox("Etapa Actual", ["Borrador", "Presentación Ofertas", "Evaluación", "Adjudicado"])
+        cierre_obs = col4.date_input("Fecha límite de Observaciones")
+        cierre_ofertas = col5.date_input("Fecha de Cierre de Ofertas")
+        
+        btn_guardar = st.form_submit_button("Guardar en Base de Datos", type="primary")
+        
+        if btn_guardar:
+            if expediente.strip() == "" or entidad.strip() == "":
+                st.warning("⚠️ Debes ingresar al menos el Expediente y la Entidad para guardar.")
+            else:
+                nuevo_registro = {
+                    "Expediente": expediente,
+                    "Entidad": entidad,
+                    "Etapa Actual": etapa,
+                    # Convertimos las fechas a texto (formato YYYY-MM-DD) para que Supabase las reciba sin error
+                    "Cierre Observaciones": str(cierre_obs),
+                    "Cierre de Ofertas": str(cierre_ofertas)
+                }
+                
+                try:
+                    # Inserción en la base de datos
+                    supabase.table("procesos_secop").insert(nuevo_registro).execute()
+                    st.success(f"✅ ¡El proceso {expediente} se registró correctamente!")
+                    # Recarga la página automáticamente para actualizar la tabla de arriba
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al guardar en Supabase: {e}")
