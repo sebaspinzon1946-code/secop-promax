@@ -56,6 +56,8 @@ st.divider()
 
 st.divider()
 
+st.divider()
+
 # ==========================================
 # 3. FORMULARIO AUTOMATIZADO CON API SECOP II
 # ==========================================
@@ -80,9 +82,12 @@ with st.expander("➕ Agregar nueva licitación al sistema", expanded=True):
                         datos = datos_json[0]
                         st.session_state['entidad_secop'] = datos.get('entidad', '')
                         
-                        # Intentar extraer la fecha de cierre de ofertas de la API
-                        if 'fecha_de_recepcion_de' in datos:
-                            st.session_state['cierre_ofertas'] = pd.to_datetime(datos['fecha_de_recepcion_de']).date()
+                        # Mapeo corregido a la variable oficial de cierre
+                        if 'fecha_de_cierre' in datos:
+                            st.session_state['cierre_ofertas'] = pd.to_datetime(datos['fecha_de_cierre']).date()
+                        
+                        # Capturamos todas las fechas ocultas para que puedas auditarlas
+                        st.session_state['fechas_cruda'] = {k: v for k, v in datos.items() if 'fecha' in k}
                         
                         st.success(f"✅ Proceso encontrado: {datos.get('entidad', '')}")
                     else:
@@ -91,6 +96,12 @@ with st.expander("➕ Agregar nueva licitación al sistema", expanded=True):
                     st.error(f"El portal rechazó la consulta (Error {respuesta.status_code}).")
             except Exception as e:
                 st.error(f"Falla técnica de conexión: {e}")
+
+    # Bloque de auditoría para ver qué fechas exactas arroja el Estado
+    if 'fechas_cruda' in st.session_state:
+        with st.expander("🔍 Ver fechas internas de SECOP II (Auditoría)"):
+            st.write("Estas son todas las fechas que el Estado registró para este proceso. Revisa cuál corresponde a observaciones y la enlazamos:")
+            st.json(st.session_state['fechas_cruda'])
 
     st.markdown("### Datos del Proceso")
     with st.form("form_nuevo_proceso", clear_on_submit=True):
@@ -101,7 +112,6 @@ with st.expander("➕ Agregar nueva licitación al sistema", expanded=True):
         col3, col4, col5 = st.columns(3)
         etapa = col3.selectbox("Etapa Actual", ["Borrador", "Presentación Ofertas", "Evaluación", "Adjudicado"])
         
-        # Asignar las fechas encontradas o dejar la fecha de hoy por defecto
         fecha_hoy = date.today()
         cierre_obs = col4.date_input("Fecha límite de Observaciones", value=fecha_hoy)
         cierre_ofertas = col5.date_input("Fecha de Cierre de Ofertas", value=st.session_state.get('cierre_ofertas', fecha_hoy))
@@ -122,12 +132,12 @@ with st.expander("➕ Agregar nueva licitación al sistema", expanded=True):
                 try:
                     supabase.table("procesos_secop").insert(nuevo_registro).execute()
                     
-                    # Limpiar la memoria temporal para el siguiente proceso
-                    for key in ['entidad_secop', 'cierre_ofertas']:
+                    # Limpieza total tras guardar
+                    for key in ['entidad_secop', 'cierre_ofertas', 'fechas_cruda']:
                         if key in st.session_state:
                             del st.session_state[key]
                             
                     st.success(f"✅ ¡El proceso {expediente} se registró correctamente!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Error al guardar en Supabase: {e}")
+                    st.error(f"❌ Error al guardar: {e}")
