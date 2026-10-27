@@ -131,8 +131,17 @@ def main():
                         if resp.status_code == 200 and len(resp.json()) > 0:
                             datos = resp.json()[0]
                             st.session_state['api_entidad'] = datos.get('entidad', '')
-                            st.session_state['api_objeto'] = datos.get('detalle_del_objeto_a_contratar', '')
-                            st.session_state['api_cuantia'] = float(datos.get('cuantia_proceso', 0))
+                            
+                            # Extracción robusta del Objeto (cubre múltiples variables de SECOP II)
+                            st.session_state['api_objeto'] = datos.get('descripci_n_del_procedimiento', datos.get('detalle_del_objeto_a_contratar', datos.get('descripcion_del_proceso', '')))
+                            
+                            # Extracción robusta del Presupuesto
+                            presupuesto_str = datos.get('precio_base', datos.get('cuantia_proceso', datos.get('estimacion_del_presupuesto', 0)))
+                            try:
+                                st.session_state['api_cuantia'] = float(presupuesto_str)
+                            except ValueError:
+                                st.session_state['api_cuantia'] = 0.0
+                                
                             st.success("✅ Datos extraídos. Completa los requisitos abajo y guarda.")
                         else:
                             st.warning("⚠️ No encontrado en la API del Estado.")
