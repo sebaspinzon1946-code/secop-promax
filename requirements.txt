@@ -4,3 +4,4 @@ supabase
 openpyxl
 python-dotenv
 reportlab
+requests
