@@ -69,16 +69,23 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
             # URL oficial de la API de SECOP II (Datos Abiertos)
             url = f"https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_proceso={exp_input.strip()}"
             try:
-                respuesta = requests.get(url).json()
-                if len(respuesta) > 0:
-                    datos = respuesta[0]
-                    # Guardamos los datos temporalmente en la memoria de la sesión
-                    st.session_state['entidad_secop'] = datos.get('entidad', '')
-                    st.success(f"✅ Proceso encontrado: {datos.get('entidad', '')}")
+                # Disfrazar la petición como navegador para evitar el bloqueo del Estado
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                respuesta = requests.get(url, headers=headers, timeout=10)
+                
+                if respuesta.status_code == 200:
+                    datos_json = respuesta.json()
+                    if len(datos_json) > 0:
+                        datos = datos_json[0]
+                        st.session_state['entidad_secop'] = datos.get('entidad', '')
+                        st.success(f"✅ Proceso encontrado: {datos.get('entidad', '')}")
+                    else:
+                        st.warning("⚠️ No se encontró el proceso en SECOP II. Revisa el número de expediente.")
                 else:
-                    st.warning("⚠️ No se encontró el proceso en SECOP II. Ingresa los datos manualmente.")
+                    st.error(f"El portal del Estado rechazó la conexión (Error {respuesta.status_code}).")
             except Exception as e:
-                st.error("Error al conectar con la API estatal.")
+                # Ahora imprimiremos el error exacto si vuelve a fallar
+                st.error(f"Falla técnica de conexión: {e}")
 
     st.markdown("### Datos del Proceso")
     with st.form("form_nuevo_proceso", clear_on_submit=True):
