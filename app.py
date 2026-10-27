@@ -8,6 +8,7 @@ load_dotenv()
 
 import pandas as pd
 import streamlit as st
+import requests  # <- Nueva librería agregada para buscar en SECOP
 from typing import Dict, Any, List, Optional, Tuple
 
 from generador_pdf import generar_informe_ejecutivo_pdf, formatear_moneda_cop, formatear_indicador
@@ -101,7 +102,7 @@ def consolidar_proponente_plural(licitacion: Dict[str, Any], integrantes_selecci
     }
 
 # =====================================================================
-# 3. INTERFAZ WEB Y CARGA DE EXCEL
+# 3. INTERFAZ WEB Y CARGA DE DATOS
 # =====================================================================
 def limpiar_num(v):
     try: return float(v)
@@ -114,8 +115,109 @@ def main():
     empresas, licitaciones = cargar_datos_base()
     
     with st.sidebar:
+        # =======================================================
+        # NUEVO MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS (API)
+        # =======================================================
+        with st.expander("➕ Buscar y Seguir Nuevo Proceso", expanded=True):
+            st.caption("Busca en SECOP II y agrégalo a tu base de datos para evaluarlo.")
+            
+            col_b1, col_b2 = st.columns([2, 1])
+            exp_buscar = col_b1.text_input("Expediente (Ej. FDL-001)")
+            
+            if col_b2.button("Buscar"):
+                if exp_buscar:
+                    try:
+                        resp = requests.get("https://www.datos.gov.co/resource/p6dx-8zbt.json", params={"referencia_del_proceso": exp_buscar.strip()})
+                        if resp.status_code == 200 and len(resp.json()) > 0:
+                            datos = resp.json()[0]
+                            st.session_state['api_entidad'] = datos.get('entidad', '')
+                            st.session_state['api_objeto'] = datos.get('detalle_del_objeto_a_contratar', '')
+                            st.session_state['api_cuantia'] = float(datos.get('cuantia_proceso', 0))
+                            st.success("✅ Datos extraídos. Completa los requisitos abajo y guarda.")
+                        else:
+                            st.warning("⚠️ No encontrado en la API del Estado.")
+                    except:
+                        st.error("Error de conexión.")
+            
+            with st.form("form_guardar_proceso", clear_on_submit=True):
+                num_interno = st.number_input("Nº Interno (Consecutivo ASESOL)", value=100)
+                num_proceso = st.text_input("Número de Proceso", value=exp_buscar)
+                entidad = st.text_input("Entidad Contratante", value=st.session_state.get('api_entidad', ''))
+                objeto = st.text_area("Objeto del Contrato", value=st.session_state.get('api_objeto', ''))
+                
+                col_f1, col_f2 = st.columns(2)
+                modalidad = col_f1.selectbox("Modalidad", ["Selección Abreviada", "Licitación Pública", "Mínima Cuantía", "Concurso de Méritos"])
+                cuantia = col_f2.number_input("Presupuesto Oficial", value=st.session_state.get('api_cuantia', 0.0), step=1000000.0)
+                
+                st.write("**Requisitos Financieros Exigidos (Pliego)**")
+                req_liq = st.number_input("Liquidez Exigida (>)", value=0.0, step=0.1)
+                req_end = st.number_input("Endeudamiento Exigido (<) %", value=0.0, step=0.1)
+                req_cob = st.number_input("Cobertura Exigida (>)", value=0.0, step=0.1)
+                
+                if st.form_submit_button("Guardar como Proceso a Seguir", type="primary"):
+                    if num_proceso and entidad:
+                        nueva_lic = {
+                            "numero_interno": num_interno,
+                            "numero_proceso": num_proceso,
+                            "entidad": entidad,
+                            "objeto": objeto,
+                            "modalidad": modalidad,
+                            "cuantia_presupuesto": cuantia,
+                            "etapa_actual": "Presentación Ofertas",
+                            "estado_revision": "ACTIVO",
+                            "req_liquidez_min": req_liq if req_liq > 0 else None,
+                            "req_endeudamiento_max": req_end if req_end > 0 else None,
+                            "req_cobertura_intereses_min": req_cob if req_cob > 0 else None
+                        }
+                        try:
+                            obtener_cliente_supabase().table("licitaciones_secop").insert(nueva_lic).execute()
+                            # Limpiamos la memoria temporal tras guardar
+                            for k in ['api_entidad', 'api_objeto', 'api_cuantia']:
+                                if k in st.session_state: del st.session_state[k]
+                            st.success(f"✅ ¡Proceso {num_proceso} guardado con éxito!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al guardar: {e}")
+
+        # =======================================================
+        # NUEVO MÓDULO 2: REGISTRO MANUAL DE EMPRESAS (RUP)
+        # =======================================================
+        with st.expander("🏢 Registrar Nueva Empresa (RUP)"):
+            with st.form("form_nueva_empresa", clear_on_submit=True):
+                alias = st.text_input("Alias / Código corto (Ej. ZEKIA)")
+                razon_social = st.text_input("Razón Social Completa")
+                nit = st.text_input("NIT")
+                
+                st.write("**Datos Financieros RUP**")
+                ac = st.number_input("Activo Corriente", value=0.0, step=1000000.0)
+                pc = st.number_input("Pasivo Corriente", value=0.0, step=1000000.0)
+                at = st.number_input("Activo Total", value=0.0, step=1000000.0)
+                pt = st.number_input("Pasivo Total", value=0.0, step=1000000.0)
+                pat = st.number_input("Patrimonio", value=0.0, step=1000000.0)
+                uo = st.number_input("Utilidad Operacional", value=0.0, step=1000000.0)
+                gi = st.number_input("Gastos de Intereses", value=0.0, step=1000000.0)
+                ct = st.number_input("Capital de Trabajo", value=0.0, step=1000000.0)
+                
+                if st.form_submit_button("Guardar Empresa en Base de Datos", type="primary"):
+                    if alias and nit:
+                        nueva_emp = {
+                            "alias_codigo": alias, "razon_social": razon_social, "nit": nit, 
+                            "activo_corriente": ac, "pasivo_corriente": pc, "activo_total": at, 
+                            "pasivo_total": pt, "patrimonio": pat, "utilidad_operacional": uo, 
+                            "gastos_intereses": gi, "capital_trabajo": ct
+                        }
+                        try:
+                            obtener_cliente_supabase().table("empresas_proponentes").insert(nueva_emp).execute()
+                            st.success("✅ Empresa guardada con éxito.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al guardar: {e}")
+
+        # =======================================================
+        # MÓDULO 3: MIGRACIÓN MASIVA (EXCEL)
+        # =======================================================
         with st.expander("📥 Cargar Excel Histórico (Migración)"):
-            st.info("Sube tu archivo Maestro para poblar la base de datos.")
+            st.info("Sube tu archivo Maestro para poblar la base de datos de forma masiva.")
             archivo_excel = st.file_uploader("Seleccionar archivo Excel", type=["xlsx", "xls"])
             
             if archivo_excel and st.button("Iniciar Migración a Supabase"):
@@ -196,11 +298,11 @@ def main():
     if not licitaciones_validas: return
 
     opciones_lic = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')}": lic for lic in licitaciones_validas}
-    lic_label = st.selectbox("Licitación:", options=list(opciones_lic.keys()))
+    lic_label = st.selectbox("Licitación a evaluar:", options=list(opciones_lic.keys()))
     licitacion_actual = opciones_lic[lic_label]
 
     st.header("2. Configuración del Proponente")
-    tipo_figura = st.radio("Modalidad:", ["INDIVIDUAL", "UNION_TEMPORAL"])
+    tipo_figura = st.radio("Modalidad de Participación:", ["INDIVIDUAL", "UNION_TEMPORAL"])
     
     empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
     mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
@@ -239,27 +341,32 @@ def main():
     # =========================================================
     # PUENTE INVISIBLE HACIA LA PESTAÑA DE DOCUMENTOS
     # =========================================================
-    # Guardamos los datos generales
+    
+    # 1. Enviamos los datos generales del proceso seleccionado
+    st.session_state['doc_num_proceso'] = licitacion_actual.get('numero_proceso', '')
+    st.session_state['doc_entidad'] = licitacion_actual.get('entidad', '')
+    st.session_state['doc_objeto'] = licitacion_actual.get('objeto', '')
+    st.session_state['doc_presupuesto'] = licitacion_actual.get('cuantia_presupuesto', 0)
+    st.session_state['doc_modalidad'] = licitacion_actual.get('modalidad', '')
+
+    # 2. Enviamos el cálculo financiero de la UT o empresa individual
     st.session_state['fin_nombre'] = nombre_proponente
     st.session_state['fin_global'] = resultado_sim['estado_global']
     
-    # Índice 0: Liquidez
     st.session_state['fin_liq_exi'] = str(resultado_sim["comparativo_indicadores"][0]["exigido_fmt"])
     st.session_state['fin_liq_log'] = str(resultado_sim["comparativo_indicadores"][0]["consolidado_fmt"])
     st.session_state['fin_liq_est'] = resultado_sim["comparativo_indicadores"][0]["estado"]
     
-    # Índice 1: Endeudamiento
     st.session_state['fin_end_exi'] = str(resultado_sim["comparativo_indicadores"][1]["exigido_fmt"])
     st.session_state['fin_end_log'] = str(resultado_sim["comparativo_indicadores"][1]["consolidado_fmt"])
     st.session_state['fin_end_est'] = resultado_sim["comparativo_indicadores"][1]["estado"]
     
-    # Índice 2: Cobertura de Intereses
     st.session_state['fin_cob_exi'] = str(resultado_sim["comparativo_indicadores"][2]["exigido_fmt"])
     st.session_state['fin_cob_log'] = str(resultado_sim["comparativo_indicadores"][2]["consolidado_fmt"])
     st.session_state['fin_cob_est'] = resultado_sim["comparativo_indicadores"][2]["estado"]
 
     st.divider()
-    st.success("✅ **Cálculo completado.** Los resultados financieros han sido enviados automáticamente. Ve a la pestaña **'Documentos'** para generar el PDF.")
+    st.success("✅ **Cálculo completado.** Los datos del proceso y los resultados financieros han sido enviados a la memoria. Ve a la pestaña **'Documentos'** para generar el PDF de inmediato.")
 
 if __name__ == "__main__":
     main()
