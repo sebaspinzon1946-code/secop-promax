@@ -31,21 +31,20 @@ with st.form("form_pdf"):
 
 if btn_generar:
     # 1. Empaquetamos los datos en los diccionarios que exige tu script
-   dic_licitacion = {
-     "numero_interno": num_proceso,
-     "numero_proceso": num_proceso,
-     "entidad": entidad,
-     "objeto": objeto,
-     "cuantia_presupuesto": presupuesto,
-     "modalidad": modalidad,
-     "fecha_registro": datetime.date.today().strftime("%d/%m/%Y"),
-     "link_secop": link_secop  # <--- Nueva variable agregada
- }
-      
+    dic_licitacion = {
+        "numero_interno": num_proceso,
+        "numero_proceso": num_proceso,
+        "entidad": entidad,
+        "objeto": objeto,
+        "cuantia_presupuesto": presupuesto,
+        "modalidad": modalidad,
+        "fecha_registro": datetime.date.today().strftime("%d/%m/%Y"),
+        "link_secop": link_secop
+    }
+    
     dic_simulacion = {
         "nombre_proponente": nombre_proponente,
         "estado_global": estado_global,
-        # Dejamos campos vacíos seguros para que tu función .get() no falle
         "comparativo_indicadores": [] 
     }
     
@@ -54,7 +53,7 @@ if btn_generar:
         pdf_bytes = generar_informe_ejecutivo_pdf(
             licitacion=dic_licitacion,
             simulacion=dic_simulacion,
-            integrantes=[] # Lista vacía por ahora
+            integrantes=[]
         )
         
         st.success("✅ Documento generado con éxito.")
