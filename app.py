@@ -235,10 +235,31 @@ def main():
     df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
     st.dataframe(df_comp, use_container_width=True, hide_index=True)
     st.info(f"DICTAMEN GLOBAL: **{resultado_sim['estado_global']}**")
+    
+    # =========================================================
+    # PUENTE INVISIBLE HACIA LA PESTAÑA DE DOCUMENTOS
+    # =========================================================
+    # Guardamos los datos generales
+    st.session_state['fin_nombre'] = nombre_proponente
+    st.session_state['fin_global'] = resultado_sim['estado_global']
+    
+    # Índice 0: Liquidez
+    st.session_state['fin_liq_exi'] = str(resultado_sim["comparativo_indicadores"][0]["exigido_fmt"])
+    st.session_state['fin_liq_log'] = str(resultado_sim["comparativo_indicadores"][0]["consolidado_fmt"])
+    st.session_state['fin_liq_est'] = resultado_sim["comparativo_indicadores"][0]["estado"]
+    
+    # Índice 1: Endeudamiento
+    st.session_state['fin_end_exi'] = str(resultado_sim["comparativo_indicadores"][1]["exigido_fmt"])
+    st.session_state['fin_end_log'] = str(resultado_sim["comparativo_indicadores"][1]["consolidado_fmt"])
+    st.session_state['fin_end_est'] = resultado_sim["comparativo_indicadores"][1]["estado"]
+    
+    # Índice 2: Cobertura de Intereses
+    st.session_state['fin_cob_exi'] = str(resultado_sim["comparativo_indicadores"][2]["exigido_fmt"])
+    st.session_state['fin_cob_log'] = str(resultado_sim["comparativo_indicadores"][2]["consolidado_fmt"])
+    st.session_state['fin_cob_est'] = resultado_sim["comparativo_indicadores"][2]["estado"]
 
     st.divider()
-    pdf_bytes = generar_informe_ejecutivo_pdf(licitacion_actual, resultado_sim, integrantes_simulacion)
-    st.download_button("⬇️ Descargar Informe Ejecutivo (PDF corporativo)", data=pdf_bytes, file_name=f"Informe_{licitacion_actual.get('numero_proceso', '0')}.pdf", mime="application/pdf", type="primary")
+    st.success("✅ **Cálculo completado.** Los resultados financieros han sido enviados automáticamente. Ve a la pestaña **'Documentos'** para generar el PDF.")
 
 if __name__ == "__main__":
     main()
