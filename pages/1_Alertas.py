@@ -67,7 +67,7 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
     if col_b2.button("Buscar en SECOP II", type="secondary"):
         if exp_input:
             # URL base limpia, sin inyectar variables
-            url = "https://www.datos.gov.co/resource/jbjy-vk9h.json"
+            url = "https://www.datos.gov.co/resource/p6dx-8zbt.json"
             try:
                 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
                 
