@@ -1,12 +1,10 @@
 import streamlit as st
 import datetime
 import requests
-# Importamos tu función desde el archivo original
 from generador_pdf import generar_informe_ejecutivo_pdf
 
 st.title("📄 Emisión de Informes Ejecutivos")
-st.caption("Generación automatizada de PDFs para evaluación técnica y financiera de ASESOL / ZEKIA")
-
+st.caption("Generación automatizada de PDFs para evaluación técnica y financiera")
 st.divider()
 
 # ==========================================
@@ -28,18 +26,12 @@ if col_s2.button("Buscar Proceso", type="secondary"):
                 datos_json = respuesta.json()
                 if len(datos_json) > 0:
                     datos = datos_json[0]
-                    # Guardamos los datos en memoria
                     st.session_state['doc_entidad'] = datos.get('entidad', '')
                     st.session_state['doc_objeto'] = datos.get('detalle_del_objeto_a_contratar', '')
                     st.session_state['doc_presupuesto'] = int(datos.get('cuantia_proceso', 0))
                     
-                    # Extraer el enlace permanente oficial de SECOP
                     url_cruda = datos.get('urlproceso', '')
-                    if isinstance(url_cruda, dict):
-                        st.session_state['doc_link'] = url_cruda.get('url', '')
-                    else:
-                        st.session_state['doc_link'] = url_cruda
-                        
+                    st.session_state['doc_link'] = url_cruda.get('url', '') if isinstance(url_cruda, dict) else url_cruda
                     st.success("✅ Datos extraídos correctamente.")
                 else:
                     st.warning("⚠️ Proceso no encontrado.")
@@ -49,13 +41,13 @@ if col_s2.button("Buscar Proceso", type="secondary"):
             st.error(f"Falla de conexión: {e}")
 
 # ==========================================
-# 2. FORMULARIO DEL DOCUMENTO
+# 2. FORMULARIO DEL DOCUMENTO Y FINANZAS
 # ==========================================
 with st.form("form_pdf"):
     st.subheader("Datos del Proceso")
     col1, col2 = st.columns(2)
     
-    num_proceso = col2.text_input("Número de Proceso / Expediente", value=exp_input)
+    num_proceso = col2.text_input("Número de Expediente", value=exp_input)
     entidad = col1.text_input("Entidad Contratante", value=st.session_state.get('doc_entidad', ''))
     
     objeto = st.text_area("Objeto del Contrato", value=st.session_state.get('doc_objeto', ''))
@@ -65,10 +57,35 @@ with st.form("form_pdf"):
     presupuesto = col3.number_input("Presupuesto Oficial (COP)", min_value=0, value=st.session_state.get('doc_presupuesto', 0), step=1000000)
     modalidad = col4.selectbox("Modalidad", ["Selección Abreviada", "Licitación Pública", "Mínima Cuantía", "Concurso de Méritos"])
     
-    st.subheader("Datos del Proponente (Unión Temporal)")
-    col5, col6 = st.columns(2)
-    nombre_proponente = col5.text_input("Nombre de la Empresa o UT", value="ZEKIA S.A.S.")
-    estado_global = col6.selectbox("Dictamen Financiero Global", ["CUMPLE", "NO CUMPLE", "REVISAR"])
+    st.divider()
+    st.subheader("Datos del Proponente y Resultados Financieros")
+    
+    # Selector de modalidad de participación
+    tipo_proponente = st.radio("Naturaleza del Proponente", ["Proponente Único", "Plural (Unión Temporal / Consorcio)"], horizontal=True)
+    nombre_proponente = st.text_input("Nombre de la Empresa o UT", value=st.session_state.get('fin_nombre', "ZEKIA S.A.S."))
+    
+    st.caption("Los siguientes valores pueden ser inyectados desde el Evaluador Financiero o digitados manualmente:")
+    
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        st.markdown("**Liquidez (>=)**")
+        liq_exi = st.text_input("Exigido", value=st.session_state.get('fin_liq_exi', "1.50"), key="l_e")
+        liq_log = st.text_input("Logrado", value=st.session_state.get('fin_liq_log', "0.00"), key="l_l")
+        liq_est = st.selectbox("Estado", ["CUMPLE", "NO CUMPLE"], key="l_s", index=0 if st.session_state.get('fin_liq_est') == "CUMPLE" else 1)
+
+    with col_f2:
+        st.markdown("**Endeudamiento (<=)**")
+        end_exi = st.text_input("Exigido", value=st.session_state.get('fin_end_exi', "0.70"), key="e_e")
+        end_log = st.text_input("Logrado", value=st.session_state.get('fin_end_log', "0.00"), key="e_l")
+        end_est = st.selectbox("Estado", ["CUMPLE", "NO CUMPLE"], key="e_s", index=0 if st.session_state.get('fin_end_est') == "CUMPLE" else 1)
+
+    with col_f3:
+        st.markdown("**Razón Cobertura (>=)**")
+        cob_exi = st.text_input("Exigido", value=st.session_state.get('fin_cob_exi', "3.00"), key="c_e")
+        cob_log = st.text_input("Logrado", value=st.session_state.get('fin_cob_log', "0.00"), key="c_l")
+        cob_est = st.selectbox("Estado", ["CUMPLE", "NO CUMPLE"], key="c_s", index=0 if st.session_state.get('fin_cob_est') == "CUMPLE" else 1)
+
+    estado_global = st.selectbox("Dictamen Financiero Global", ["CUMPLE", "NO CUMPLE", "REVISAR"], index=0 if st.session_state.get('fin_global') == "CUMPLE" else 2)
     
     btn_generar = st.form_submit_button("Generar Borrador PDF", type="primary")
 
@@ -84,17 +101,27 @@ if btn_generar:
         "link_secop": link_secop
     }
     
+    # Armamos la estructura exacta que pide el bloque "04 COMPARATIVO FINANCIERO" de tu ReportLab
+    indicadores = [
+        {"indicador": "Índice de Liquidez", "regla": ">=", "exigido_fmt": liq_exi, "consolidado_fmt": liq_log, "estado": liq_est},
+        {"indicador": "Índice de Endeudamiento", "regla": "<=", "exigido_fmt": end_exi, "consolidado_fmt": end_log, "estado": end_est},
+        {"indicador": "Razón de Cobertura de Intereses", "regla": ">=", "exigido_fmt": cob_exi, "consolidado_fmt": cob_log, "estado": cob_est}
+    ]
+    
+    # Ajustamos el nombre para que el PDF especifique si es único o unión temporal
+    nombre_formateado = f"{nombre_proponente} ({tipo_proponente})"
+    
     dic_simulacion = {
-        "nombre_proponente": nombre_proponente,
+        "nombre_proponente": nombre_formateado, 
         "estado_global": estado_global,
-        "comparativo_indicadores": [] 
+        "comparativo_indicadores": indicadores
     }
     
     try:
         pdf_bytes = generar_informe_ejecutivo_pdf(
             licitacion=dic_licitacion,
             simulacion=dic_simulacion,
-            integrantes=[]
+            integrantes=[] 
         )
         
         st.success("✅ Documento generado con éxito.")
