@@ -1,20 +1,21 @@
 """
-Módulo 2: Motor de Evaluación, Simulador UT y Migrador de Excel (Streamlit)
+Módulo Único: Centro de Comando (Buscador SECOP, Evaluador UT y Emisión PDF)
 """
 
 import os
+import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
 import pandas as pd
 import streamlit as st
-import requests  # <- Nueva librería agregada para buscar en SECOP
+import requests
 from typing import Dict, Any, List, Optional, Tuple
 
 from generador_pdf import generar_informe_ejecutivo_pdf, formatear_moneda_cop, formatear_indicador
 
 # =====================================================================
-# 1. CONEXIÓN A SUPABASE Y EXTRACCIÓN SEGURA
+# 1. CONEXIÓN A SUPABASE
 # =====================================================================
 def obtener_cliente_supabase():
     url = "https://mqcjmrdznbgfhpmnmvns.supabase.co"
@@ -43,7 +44,7 @@ def cargar_datos_base() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     return [], []
 
 # =====================================================================
-# 2. MOTOR MATEMÁTICO (COLOMBIA COMPRA EFICIENTE)
+# 2. MOTOR MATEMÁTICO FINANCIERO
 # =====================================================================
 def evaluar_indicador(nombre: str, regla: str, exigido: Optional[float], valor_consolidado: Optional[float], es_porcentaje: bool = False, es_moneda: bool = False, indeterminado: bool = False) -> Dict[str, Any]:
     if exigido is None:
@@ -102,7 +103,7 @@ def consolidar_proponente_plural(licitacion: Dict[str, Any], integrantes_selecci
     }
 
 # =====================================================================
-# 3. INTERFAZ WEB Y CARGA DE DATOS
+# 3. INTERFAZ ALL-IN-ONE
 # =====================================================================
 def limpiar_num(v):
     try: return float(v)
@@ -110,17 +111,13 @@ def limpiar_num(v):
 
 def main():
     st.set_page_config(page_title="SECOP II ProMax", page_icon="⚖️", layout="wide")
-    st.title("⚖️ Plataforma SaaS SECOP II — Evaluador Financiero y Simulador UT")
+    st.title("⚖️ Centro de Comando SECOP II — ASESOL / ZEKIA")
 
     empresas, licitaciones = cargar_datos_base()
     
     with st.sidebar:
-        # =======================================================
-        # NUEVO MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS (API)
-        # =======================================================
+        # MÓDULO 1: BUSCADOR Y CREADOR (EXTRACCIÓN ROBUSTA)
         with st.expander("➕ Buscar y Seguir Nuevo Proceso", expanded=True):
-            st.caption("Busca en SECOP II y agrégalo a tu base de datos para evaluarlo.")
-            
             col_b1, col_b2 = st.columns([2, 1])
             exp_buscar = col_b1.text_input("Expediente (Ej. FDL-001)")
             
@@ -132,7 +129,7 @@ def main():
                             datos = resp.json()[0]
                             st.session_state['api_entidad'] = datos.get('entidad', '')
                             
-                            # Extracción robusta del Objeto (cubre múltiples variables de SECOP II)
+                            # Extracción robusta del Objeto
                             st.session_state['api_objeto'] = datos.get('descripci_n_del_procedimiento', datos.get('detalle_del_objeto_a_contratar', datos.get('descripcion_del_proceso', '')))
                             
                             # Extracción robusta del Presupuesto
@@ -142,7 +139,7 @@ def main():
                             except ValueError:
                                 st.session_state['api_cuantia'] = 0.0
                                 
-                            st.success("✅ Datos extraídos. Completa los requisitos abajo y guarda.")
+                            st.success("✅ Datos extraídos. Completa los requisitos y guarda.")
                         else:
                             st.warning("⚠️ No encontrado en la API del Estado.")
                     except:
@@ -166,31 +163,23 @@ def main():
                 if st.form_submit_button("Guardar como Proceso a Seguir", type="primary"):
                     if num_proceso and entidad:
                         nueva_lic = {
-                            "numero_interno": num_interno,
-                            "numero_proceso": num_proceso,
-                            "entidad": entidad,
-                            "objeto": objeto,
-                            "modalidad": modalidad,
-                            "cuantia_presupuesto": cuantia,
-                            "etapa_actual": "Presentación Ofertas",
-                            "estado_revision": "ACTIVO",
-                            "req_liquidez_min": req_liq if req_liq > 0 else None,
+                            "numero_interno": num_interno, "numero_proceso": num_proceso,
+                            "entidad": entidad, "objeto": objeto, "modalidad": modalidad,
+                            "cuantia_presupuesto": cuantia, "etapa_actual": "Presentación Ofertas",
+                            "estado_revision": "ACTIVO", "req_liquidez_min": req_liq if req_liq > 0 else None,
                             "req_endeudamiento_max": req_end if req_end > 0 else None,
                             "req_cobertura_intereses_min": req_cob if req_cob > 0 else None
                         }
                         try:
                             obtener_cliente_supabase().table("licitaciones_secop").insert(nueva_lic).execute()
-                            # Limpiamos la memoria temporal tras guardar
                             for k in ['api_entidad', 'api_objeto', 'api_cuantia']:
                                 if k in st.session_state: del st.session_state[k]
-                            st.success(f"✅ ¡Proceso {num_proceso} guardado con éxito!")
+                            st.success(f"✅ ¡Guardado con éxito!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al guardar: {e}")
 
-        # =======================================================
-        # NUEVO MÓDULO 2: REGISTRO MANUAL DE EMPRESAS (RUP)
-        # =======================================================
+        # MÓDULO 2: REGISTRO MANUAL DE EMPRESAS
         with st.expander("🏢 Registrar Nueva Empresa (RUP)"):
             with st.form("form_nueva_empresa", clear_on_submit=True):
                 alias = st.text_input("Alias / Código corto (Ej. ZEKIA)")
@@ -217,101 +206,26 @@ def main():
                         }
                         try:
                             obtener_cliente_supabase().table("empresas_proponentes").insert(nueva_emp).execute()
-                            st.success("✅ Empresa guardada con éxito.")
+                            st.success("✅ Empresa guardada.")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error al guardar: {e}")
+                            st.error(f"Error: {e}")
 
-        # =======================================================
-        # MÓDULO 3: MIGRACIÓN MASIVA (EXCEL)
-        # =======================================================
-        with st.expander("📥 Cargar Excel Histórico (Migración)"):
-            st.info("Sube tu archivo Maestro para poblar la base de datos de forma masiva.")
-            archivo_excel = st.file_uploader("Seleccionar archivo Excel", type=["xlsx", "xls"])
-            
-            if archivo_excel and st.button("Iniciar Migración a Supabase"):
-                cliente = obtener_cliente_supabase()
-                if not cliente:
-                    st.error("Error: No hay conexión a Supabase configurada.")
-                else:
-                    try:
-                        df_lic = pd.read_excel(archivo_excel, sheet_name="MATRIZ GENERAL")
-                        df_lic.columns = [str(c).strip().upper() for c in df_lic.columns]
-                        registros_lic = []
-                        for _, fila in df_lic.iterrows():
-                            num_proc = str(fila.get("NO. PROCESO", fila.get("N. PROCESO", ""))).strip()
-                            if not num_proc or num_proc == "nan": continue
-                            registros_lic.append({
-                                "numero_interno": int(limpiar_num(fila.get("NO.", 0))),
-                                "entidad": str(fila.get("ENTIDAD", "")),
-                                "numero_proceso": num_proc,
-                                "objeto": str(fila.get("OBJETO", "")),
-                                "modalidad": str(fila.get("MODALIDAD", "")),
-                                "cuantia_presupuesto": limpiar_num(fila.get("CUANTIA", fila.get("PRESUPUESTO OFICIAL", 0))),
-                                "etapa_actual": str(fila.get("ETAPA ACTUAL DEL PROCESO", fila.get("ETAPA ACTUAL", ""))),
-                                "estado_revision": str(fila.get("ESTADO REVISION", fila.get("REVISION", ""))),
-                            })
-                        if registros_lic:
-                            cliente.table("licitaciones_secop").insert(registros_lic).execute()
-                        
-                        df_emp = pd.read_excel(archivo_excel, sheet_name="RUP EMPRESAS")
-                        df_emp.columns = [str(c).strip().upper() for c in df_emp.columns]
-                        registros_emp = []
-                        for _, fila in df_emp.iterrows():
-                            nit = str(fila.get("NIT", "")).strip()
-                            if not nit or nit == "nan": continue
-                            registros_emp.append({
-                                "alias_codigo": str(fila.get("ALIAS", fila.get("ALIAS/CODIGO", "N/A"))).strip(),
-                                "razon_social": str(fila.get("RAZON SOCIAL", fila.get("RAZÓN SOCIAL", "N/A"))).strip(),
-                                "nit": nit,
-                                "activo_corriente": limpiar_num(fila.get("ACTIVO CORRIENTE")),
-                                "pasivo_corriente": limpiar_num(fila.get("PASIVO CORRIENTE")),
-                                "activo_total": limpiar_num(fila.get("ACTIVO TOTAL")),
-                                "pasivo_total": limpiar_num(fila.get("PASIVO TOTAL")),
-                                "patrimonio": limpiar_num(fila.get("PATRIMONIO")),
-                                "utilidad_operacional": limpiar_num(fila.get("UTILIDAD OPERACIONAL")),
-                                "gastos_intereses": limpiar_num(fila.get("GASTOS DE INTERESES", fila.get("GASTOS DE INTERES", 0))),
-                                "capital_trabajo": limpiar_num(fila.get("CAPITAL DE TRABAJO")),
-                            })
-                        if registros_emp:
-                            cliente.table("empresas_proponentes").insert(registros_emp).execute()
-                        
-                        st.success("¡Migración completada!")
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Error detallado de guardado: {e}")
-        
-        st.divider()
-
-    # BLOQUE DE DIAGNÓSTICO
-    if not licitaciones or not empresas:
-        cliente = obtener_cliente_supabase()
-        st.subheader("🔍 Diagnóstico Definitivo")
-        if not cliente:
-            st.error("🔴 **Error Local:** El sistema no detecta tus credenciales. Asegúrate de que iniciaste la consola negra estando dentro de la carpeta `D:\\PlataformaLicitaciones` para que pueda leer el archivo `.env`.")
-        else:
-            try:
-                test = cliente.table("licitaciones_secop").select("*").limit(1).execute()
-                if not test.data:
-                    st.warning("🟡 **Supabase está conectado, pero responde con 0 datos.** (Puede ser por la falla técnica de sus servidores o la caché de seguridad).")
-                else:
-                    st.success(f"🟢 **¡Conectado! Datos crudos detectados:** {test.data}")
-            except Exception as e:
-                st.error(f"🔴 **Supabase rechazó la lectura por este error:** {e}")
+    # =====================================================================
+    # PANEL CENTRAL: EVALUACIÓN Y EMISIÓN PDF
+    # =====================================================================
+    licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
+    if not licitaciones_validas: 
+        st.warning("⚠️ No hay licitaciones registradas. Agrega una desde el menú lateral izquierdo.")
         return
 
     st.header("1. Selección del Proceso SECOP II")
-    
-    licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
-    if not licitaciones_validas: return
-
     opciones_lic = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')}": lic for lic in licitaciones_validas}
     lic_label = st.selectbox("Licitación a evaluar:", options=list(opciones_lic.keys()))
     licitacion_actual = opciones_lic[lic_label]
 
     st.header("2. Configuración del Proponente")
-    tipo_figura = st.radio("Modalidad de Participación:", ["INDIVIDUAL", "UNION_TEMPORAL"])
+    tipo_figura = st.radio("Modalidad de Participación:", ["INDIVIDUAL", "UNION_TEMPORAL"], horizontal=True)
     
     empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
     mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
@@ -322,7 +236,7 @@ def main():
     else:
         empresas_elegidas = st.multiselect("Integrantes UT:", list(mapa_empresas.keys()), default=[list(mapa_empresas.keys())[0]] if mapa_empresas else [])
         
-    nombre_proponente = st.text_input("Nombre de la Organización / UT:", value=f"UT {' + '.join(empresas_elegidas)}" if tipo_figura != "INDIVIDUAL" else empresas_elegidas[0] if empresas_elegidas else "")
+    nombre_proponente = st.text_input("Nombre de la Organización / UT:", value=f"UT {' + '.join(empresas_elegidas)}" if tipo_figura != "INDIVIDUAL" else (empresas_elegidas[0] if empresas_elegidas else ""))
 
     st.subheader(f"📋 {licitacion_actual.get('numero_proceso', '')} — {licitacion_actual.get('entidad', '')}")
     st.write(f"**Objeto:** {licitacion_actual.get('objeto', '')}")
@@ -340,42 +254,53 @@ def main():
         integrantes_simulacion.append(emp_copy)
 
     resultado_sim = consolidar_proponente_plural(licitacion_actual, integrantes_simulacion, tipo_figura)
-    resultado_sim["nombre_proponente"] = nombre_proponente
-
+    
     st.subheader("📊 Consolidado Financiero")
     df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
     st.dataframe(df_comp, use_container_width=True, hide_index=True)
     st.info(f"DICTAMEN GLOBAL: **{resultado_sim['estado_global']}**")
-    
-    # =========================================================
-    # PUENTE INVISIBLE HACIA LA PESTAÑA DE DOCUMENTOS
-    # =========================================================
-    
-    # 1. Enviamos los datos generales del proceso seleccionado
-    st.session_state['doc_num_proceso'] = licitacion_actual.get('numero_proceso', '')
-    st.session_state['doc_entidad'] = licitacion_actual.get('entidad', '')
-    st.session_state['doc_objeto'] = licitacion_actual.get('objeto', '')
-    st.session_state['doc_presupuesto'] = licitacion_actual.get('cuantia_presupuesto', 0)
-    st.session_state['doc_modalidad'] = licitacion_actual.get('modalidad', '')
-
-    # 2. Enviamos el cálculo financiero de la UT o empresa individual
-    st.session_state['fin_nombre'] = nombre_proponente
-    st.session_state['fin_global'] = resultado_sim['estado_global']
-    
-    st.session_state['fin_liq_exi'] = str(resultado_sim["comparativo_indicadores"][0]["exigido_fmt"])
-    st.session_state['fin_liq_log'] = str(resultado_sim["comparativo_indicadores"][0]["consolidado_fmt"])
-    st.session_state['fin_liq_est'] = resultado_sim["comparativo_indicadores"][0]["estado"]
-    
-    st.session_state['fin_end_exi'] = str(resultado_sim["comparativo_indicadores"][1]["exigido_fmt"])
-    st.session_state['fin_end_log'] = str(resultado_sim["comparativo_indicadores"][1]["consolidado_fmt"])
-    st.session_state['fin_end_est'] = resultado_sim["comparativo_indicadores"][1]["estado"]
-    
-    st.session_state['fin_cob_exi'] = str(resultado_sim["comparativo_indicadores"][2]["exigido_fmt"])
-    st.session_state['fin_cob_log'] = str(resultado_sim["comparativo_indicadores"][2]["consolidado_fmt"])
-    st.session_state['fin_cob_est'] = resultado_sim["comparativo_indicadores"][2]["estado"]
 
     st.divider()
-    st.success("✅ **Cálculo completado.** Los datos del proceso y los resultados financieros han sido enviados a la memoria. Ve a la pestaña **'Documentos'** para generar el PDF de inmediato.")
+
+    # =====================================================================
+    # 3. GENERACIÓN DIRECTA DE PDF
+    # =====================================================================
+    st.header("3. Emisión de Informe Ejecutivo (PDF)")
+    link_oficial = st.text_input("Opcional: Pega el enlace permanente de SECOP para incluirlo en el PDF", placeholder="https://community.secop.gov.co/Public/Tendering...")
+    
+    dic_licitacion = {
+        "numero_interno": licitacion_actual.get('numero_interno', ''),
+        "numero_proceso": licitacion_actual.get('numero_proceso', ''),
+        "entidad": licitacion_actual.get('entidad', ''),
+        "objeto": licitacion_actual.get('objeto', ''),
+        "cuantia_presupuesto": licitacion_actual.get('cuantia_presupuesto', 0),
+        "modalidad": licitacion_actual.get('modalidad', ''),
+        "fecha_registro": datetime.date.today().strftime("%d/%m/%Y"),
+        "link_secop": link_oficial
+    }
+    
+    tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
+    dic_simulacion = {
+        "nombre_proponente": f"{nombre_proponente} ({tipo_etiqueta})",
+        "estado_global": resultado_sim['estado_global'],
+        "comparativo_indicadores": resultado_sim["comparativo_indicadores"]
+    }
+
+    try:
+        pdf_bytes = generar_informe_ejecutivo_pdf(
+            licitacion=dic_licitacion,
+            simulacion=dic_simulacion,
+            integrantes=[]
+        )
+        st.download_button(
+            label="⬇️ Descargar Informe Ejecutivo (PDF)",
+            data=pdf_bytes,
+            file_name=f"Informe_{licitacion_actual.get('numero_proceso', '0')}.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
+    except Exception as e:
+        st.error(f"Error al compilar el documento: {e}")
 
 if __name__ == "__main__":
     main()
