@@ -94,15 +94,20 @@ def generar_informe_ejecutivo_pdf(
     story.append(t_meta)
     story.append(Spacer(1, 4*mm))
 
-    # 01 Identificación
+   # 01 Identificación
     story.append(Paragraph("01 IDENTIFICACIÓN Y ALCANCE DEL PROCESO", sec_title_style))
+    
+    # Lógica para crear el hipervínculo azul en el PDF
+    enlace = licitacion.get("link_secop", "").strip()
+    texto_enlace = f"<a href='{enlace}' color='blue'><u>Abrir SECOP</u></a>" if enlace else "N/A"
+
     data_01 = [
         [Paragraph("PRESUPUESTO OFICIAL", cell_bold), Paragraph(formatear_moneda_cop(licitacion.get("cuantia_presupuesto")), cell_center_bold),
          Paragraph("LUGAR", cell_bold), Paragraph(licitacion.get("lugar_ejecucion", "Bogotá D.C."), cell_center),
          Paragraph("PLAZO", cell_bold), Paragraph(licitacion.get("tiempo_ejecucion", ""), cell_center)],
         [Paragraph("ETAPA ACTUAL SECOP", cell_bold), Paragraph(licitacion.get("etapa_actual", ""), cell_center),
          Paragraph("REVISIÓN", cell_bold), Paragraph(licitacion.get("estado_revision", ""), cell_center),
-         Paragraph("LINK DIRECTO SECOP", cell_bold), Paragraph("Ver en SECOP", cell_center)]
+         Paragraph("LINK DIRECTO", cell_bold), Paragraph(texto_enlace, cell_center)]
     ]
     story.append(make_table(data_01, [40*mm, 38*mm, 25*mm, 25*mm, 28*mm, 30*mm], [
         ('BACKGROUND', (0,0), (0,-1), gray_bg),
