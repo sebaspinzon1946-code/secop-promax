@@ -54,10 +54,12 @@ st.divider()
 
 st.divider()
 
+st.divider()
+
 # ==========================================
 # 3. FORMULARIO AUTOMATIZADO CON API SECOP II
 # ==========================================
-with st.expander("➕ Agregar nueva licitación al sistema"):
+with st.expander("➕ Agregar nueva licitación al sistema", expanded=True):
     st.markdown("### 🔍 Búsqueda Inteligente")
     st.caption("Busca directamente en Datos Abiertos de Colombia ingresando el número de proceso.")
     
@@ -66,12 +68,9 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
     
     if col_b2.button("Buscar en SECOP II", type="secondary"):
         if exp_input:
-            # URL base limpia, sin inyectar variables
             url = "https://www.datos.gov.co/resource/p6dx-8zbt.json"
             try:
                 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                
-                # Delegamos a requests la codificación segura de los guiones y espacios
                 parametros = {"referencia_del_proceso": exp_input.strip()}
                 respuesta = requests.get(url, headers=headers, params=parametros, timeout=10)
                 
@@ -80,12 +79,16 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
                     if len(datos_json) > 0:
                         datos = datos_json[0]
                         st.session_state['entidad_secop'] = datos.get('entidad', '')
+                        
+                        # Intentar extraer la fecha de cierre de ofertas de la API
+                        if 'fecha_de_recepcion_de' in datos:
+                            st.session_state['cierre_ofertas'] = pd.to_datetime(datos['fecha_de_recepcion_de']).date()
+                        
                         st.success(f"✅ Proceso encontrado: {datos.get('entidad', '')}")
                     else:
                         st.warning("⚠️ No se encontró el proceso. Verifica el número exacto.")
                 else:
-                    # Imprimimos el motivo exacto del rechazo si vuelve a ocurrir
-                    st.error(f"El portal rechazó la consulta (Error {respuesta.status_code}: {respuesta.text}).")
+                    st.error(f"El portal rechazó la consulta (Error {respuesta.status_code}).")
             except Exception as e:
                 st.error(f"Falla técnica de conexión: {e}")
 
@@ -93,15 +96,15 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
     with st.form("form_nuevo_proceso", clear_on_submit=True):
         col1, col2 = st.columns(2)
         expediente = col1.text_input("Número de Expediente", value=exp_input)
-        
-        # Leemos la entidad si fue encontrada por la API, si no, queda en blanco
-        entidad_previa = st.session_state.get('entidad_secop', '')
-        entidad = col2.text_input("Entidad Contratante", value=entidad_previa)
+        entidad = col2.text_input("Entidad Contratante", value=st.session_state.get('entidad_secop', ''))
         
         col3, col4, col5 = st.columns(3)
         etapa = col3.selectbox("Etapa Actual", ["Borrador", "Presentación Ofertas", "Evaluación", "Adjudicado"])
-        cierre_obs = col4.date_input("Fecha límite de Observaciones")
-        cierre_ofertas = col5.date_input("Fecha de Cierre de Ofertas")
+        
+        # Asignar las fechas encontradas o dejar la fecha de hoy por defecto
+        fecha_hoy = date.today()
+        cierre_obs = col4.date_input("Fecha límite de Observaciones", value=fecha_hoy)
+        cierre_ofertas = col5.date_input("Fecha de Cierre de Ofertas", value=st.session_state.get('cierre_ofertas', fecha_hoy))
         
         btn_guardar = st.form_submit_button("Guardar en Base de Datos", type="primary")
         
@@ -118,9 +121,12 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
                 }
                 try:
                     supabase.table("procesos_secop").insert(nuevo_registro).execute()
-                    # Limpiamos la memoria temporal tras guardar con éxito
-                    if 'entidad_secop' in st.session_state: 
-                        del st.session_state['entidad_secop']
+                    
+                    # Limpiar la memoria temporal para el siguiente proceso
+                    for key in ['entidad_secop', 'cierre_ofertas']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                            
                     st.success(f"✅ ¡El proceso {expediente} se registró correctamente!")
                     st.rerun()
                 except Exception as e:
