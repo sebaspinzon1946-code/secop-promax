@@ -8,11 +8,14 @@ st.caption("Generación automatizada de PDFs para evaluación técnica y financi
 st.divider()
 
 # ==========================================
-# 1. BUSCADOR AUTOMÁTICO SECOP II
+# 1. BUSCADOR AUTOMÁTICO SECOP II (Respaldo)
 # ==========================================
-st.subheader("🔍 Autocompletado desde SECOP II")
+st.subheader("🔍 Autocompletado desde SECOP II (Respaldo)")
+st.caption("Si vienes desde el Evaluador Financiero, los datos ya están cargados. Si no, puedes buscar aquí.")
 col_s1, col_s2 = st.columns([3, 1])
-exp_input = col_s1.text_input("Ingresa el Número de Expediente para extraer datos")
+
+# Lee el número de proceso que envía app.py, si no hay nada, lo deja en blanco
+exp_input = col_s1.text_input("Ingresa el Número de Expediente para extraer datos", value=st.session_state.get('doc_num_proceso', ''))
 
 if col_s2.button("Buscar Proceso", type="secondary"):
     if exp_input:
@@ -47,7 +50,7 @@ with st.form("form_pdf"):
     st.subheader("Datos del Proceso")
     col1, col2 = st.columns(2)
     
-    num_proceso = col2.text_input("Número de Expediente", value=exp_input)
+    num_proceso = col2.text_input("Número de Expediente", value=st.session_state.get('doc_num_proceso', exp_input))
     entidad = col1.text_input("Entidad Contratante", value=st.session_state.get('doc_entidad', ''))
     
     objeto = st.text_area("Objeto del Contrato", value=st.session_state.get('doc_objeto', ''))
@@ -55,7 +58,12 @@ with st.form("form_pdf"):
     
     col3, col4 = st.columns(2)
     presupuesto = col3.number_input("Presupuesto Oficial (COP)", min_value=0, value=st.session_state.get('doc_presupuesto', 0), step=1000000)
-    modalidad = col4.selectbox("Modalidad", ["Selección Abreviada", "Licitación Pública", "Mínima Cuantía", "Concurso de Méritos"])
+    
+    # Manejo inteligente de la modalidad desde la memoria
+    lista_modalidades = ["Selección Abreviada", "Licitación Pública", "Mínima Cuantía", "Concurso de Méritos"]
+    mod_memoria = st.session_state.get('doc_modalidad', 'Selección Abreviada')
+    index_mod = lista_modalidades.index(mod_memoria) if mod_memoria in lista_modalidades else 0
+    modalidad = col4.selectbox("Modalidad", lista_modalidades, index=index_mod)
     
     st.divider()
     st.subheader("Datos del Proponente y Resultados Financieros")
@@ -64,7 +72,7 @@ with st.form("form_pdf"):
     tipo_proponente = st.radio("Naturaleza del Proponente", ["Proponente Único", "Plural (Unión Temporal / Consorcio)"], horizontal=True)
     nombre_proponente = st.text_input("Nombre de la Empresa o UT", value=st.session_state.get('fin_nombre', "ZEKIA S.A.S."))
     
-    st.caption("Los siguientes valores pueden ser inyectados desde el Evaluador Financiero o digitados manualmente:")
+    st.caption("Los siguientes valores han sido inyectados desde el Evaluador Financiero (o puedes digitarlos manualmente):")
     
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
