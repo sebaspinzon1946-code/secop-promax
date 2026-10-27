@@ -66,12 +66,14 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
     
     if col_b2.button("Buscar en SECOP II", type="secondary"):
         if exp_input:
-            # URL oficial de la API de SECOP II (Datos Abiertos)
-            url = f"https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_proceso={exp_input.strip()}"
+            # URL base limpia, sin inyectar variables
+            url = "https://www.datos.gov.co/resource/jbjy-vk9h.json"
             try:
-                # Disfrazar la petición como navegador para evitar el bloqueo del Estado
                 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                respuesta = requests.get(url, headers=headers, timeout=10)
+                
+                # Delegamos a requests la codificación segura de los guiones y espacios
+                parametros = {"referencia_del_proceso": exp_input.strip()}
+                respuesta = requests.get(url, headers=headers, params=parametros, timeout=10)
                 
                 if respuesta.status_code == 200:
                     datos_json = respuesta.json()
@@ -80,11 +82,11 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
                         st.session_state['entidad_secop'] = datos.get('entidad', '')
                         st.success(f"✅ Proceso encontrado: {datos.get('entidad', '')}")
                     else:
-                        st.warning("⚠️ No se encontró el proceso en SECOP II. Revisa el número de expediente.")
+                        st.warning("⚠️ No se encontró el proceso. Verifica el número exacto.")
                 else:
-                    st.error(f"El portal del Estado rechazó la conexión (Error {respuesta.status_code}).")
+                    # Imprimimos el motivo exacto del rechazo si vuelve a ocurrir
+                    st.error(f"El portal rechazó la consulta (Error {respuesta.status_code}: {respuesta.text}).")
             except Exception as e:
-                # Ahora imprimiremos el error exacto si vuelve a fallar
                 st.error(f"Falla técnica de conexión: {e}")
 
     st.markdown("### Datos del Proceso")
