@@ -1,5 +1,5 @@
 """
-Módulo Único: Centro de Comando (Buscador SECOP, Evaluador UT y Emisión PDF)
+Módulo Único: Centro de Comando (Buscador SECOP, Evaluador UT y Emisión PDF Completa)
 """
 
 import os
@@ -116,65 +116,94 @@ def main():
     empresas, licitaciones = cargar_datos_base()
     
     with st.sidebar:
-        # MÓDULO 1: BUSCADOR Y CREADOR (EXTRACCIÓN ROBUSTA)
-        with st.expander("➕ Buscar y Seguir Nuevo Proceso", expanded=True):
+        # MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS (COMPLETO)
+        with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=True):
             col_b1, col_b2 = st.columns([2, 1])
             exp_buscar = col_b1.text_input("Expediente (Ej. FDL-001)")
             
-            if col_b2.button("Buscar"):
+            if col_b2.button("Buscar API"):
                 if exp_buscar:
                     try:
                         resp = requests.get("https://www.datos.gov.co/resource/p6dx-8zbt.json", params={"referencia_del_proceso": exp_buscar.strip()})
                         if resp.status_code == 200 and len(resp.json()) > 0:
                             datos = resp.json()[0]
                             st.session_state['api_entidad'] = datos.get('entidad', '')
-                            
-                            # Extracción robusta del Objeto
                             st.session_state['api_objeto'] = datos.get('descripci_n_del_procedimiento', datos.get('detalle_del_objeto_a_contratar', datos.get('descripcion_del_proceso', '')))
                             
-                            # Extracción robusta del Presupuesto
                             presupuesto_str = datos.get('precio_base', datos.get('cuantia_proceso', datos.get('estimacion_del_presupuesto', 0)))
                             try:
                                 st.session_state['api_cuantia'] = float(presupuesto_str)
                             except ValueError:
                                 st.session_state['api_cuantia'] = 0.0
                                 
-                            st.success("✅ Datos extraídos. Completa los requisitos y guarda.")
+                            # Extraer URL permanente oficial
+                            url_cruda = datos.get('urlproceso', '')
+                            st.session_state['api_link'] = url_cruda.get('url', '') if isinstance(url_cruda, dict) else url_cruda
+                            
+                            st.success("✅ Datos básicos extraídos de SECOP.")
                         else:
                             st.warning("⚠️ No encontrado en la API del Estado.")
                     except:
                         st.error("Error de conexión.")
             
             with st.form("form_guardar_proceso", clear_on_submit=True):
-                num_interno = st.number_input("Nº Interno (Consecutivo ASESOL)", value=100)
+                num_interno = st.number_input("Nº Interno ASESOL", value=100)
                 num_proceso = st.text_input("Número de Proceso", value=exp_buscar)
-                entidad = st.text_input("Entidad Contratante", value=st.session_state.get('api_entidad', ''))
+                entidad = st.text_input("Entidad", value=st.session_state.get('api_entidad', ''))
                 objeto = st.text_area("Objeto del Contrato", value=st.session_state.get('api_objeto', ''))
+                link_permanente = st.text_input("Link SECOP II", value=st.session_state.get('api_link', ''))
                 
                 col_f1, col_f2 = st.columns(2)
                 modalidad = col_f1.selectbox("Modalidad", ["Selección Abreviada", "Licitación Pública", "Mínima Cuantía", "Concurso de Méritos"])
-                cuantia = col_f2.number_input("Presupuesto Oficial", value=st.session_state.get('api_cuantia', 0.0), step=1000000.0)
+                cuantia = col_f2.number_input("Presupuesto", value=st.session_state.get('api_cuantia', 0.0), step=1000000.0)
                 
-                st.write("**Requisitos Financieros Exigidos (Pliego)**")
+                st.write("**Requisitos Financieros Exigidos**")
                 req_liq = st.number_input("Liquidez Exigida (>)", value=0.0, step=0.1)
                 req_end = st.number_input("Endeudamiento Exigido (<) %", value=0.0, step=0.1)
                 req_cob = st.number_input("Cobertura Exigida (>)", value=0.0, step=0.1)
                 
-                if st.form_submit_button("Guardar como Proceso a Seguir", type="primary"):
+                st.write("**Hitos y Fechas Clave**")
+                f_interes = st.text_input("Fecha Manifestación Interés", value="N/A")
+                f_sorteo = st.text_input("Fecha Sorteo", value="N/A")
+                f_mipyme = st.text_input("Fecha Limitación Mipyme", value="N/A")
+                f_obs_pre = st.text_input("Fecha Obs. Proyectos", value="N/A")
+                f_obs_def = st.text_input("Fecha Obs. Definitivos", value="N/A")
+                f_oferta = st.text_input("Fecha Presentación Oferta", value="N/A")
+                
+                st.write("**Componente Técnico y Experiencia**")
+                resumen_gen = st.text_area("Síntesis Ejecución / Requisitos", value="N/A")
+                exp_gen_cont = st.text_input("Contratos Exp. General", value="N/A")
+                exp_gen_desc = st.text_area("Descripción Exp. General", value="N/A")
+                exp_esp_cont = st.text_input("Contratos Exp. Específica", value="N/A")
+                exp_esp_desc = st.text_area("Descripción Exp. Específica", value="N/A")
+                regla_emp = st.text_area("Reglas Emprendimientos / Mujeres / Mipyme", value="N/A")
+                obs_rec = st.text_area("Observaciones y Recomendaciones", value="N/A")
+                
+                if st.form_submit_button("Guardar Proceso Completo", type="primary"):
                     if num_proceso and entidad:
                         nueva_lic = {
                             "numero_interno": num_interno, "numero_proceso": num_proceso,
                             "entidad": entidad, "objeto": objeto, "modalidad": modalidad,
                             "cuantia_presupuesto": cuantia, "etapa_actual": "Presentación Ofertas",
-                            "estado_revision": "ACTIVO", "req_liquidez_min": req_liq if req_liq > 0 else None,
+                            "estado_revision": "ACTIVO", 
+                            "req_liquidez_min": req_liq if req_liq > 0 else None,
                             "req_endeudamiento_max": req_end if req_end > 0 else None,
-                            "req_cobertura_intereses_min": req_cob if req_cob > 0 else None
+                            "req_cobertura_intereses_min": req_cob if req_cob > 0 else None,
+                            "link_secop": link_permanente,
+                            "fecha_manifestacion_interes": f_interes, "fecha_sorteo": f_sorteo,
+                            "fecha_limitacion_mipyme": f_mipyme, "fecha_obs_prepliego": f_obs_pre,
+                            "fecha_obs_pliego_def": f_obs_def, "fecha_presentacion_oferta": f_oferta,
+                            "resumen_requerimientos_generales": resumen_gen,
+                            "exp_general_contratos": exp_gen_cont, "exp_general_descripcion": exp_gen_desc,
+                            "exp_especifica_contratos": exp_esp_cont, "exp_especifica_descripcion": exp_esp_desc,
+                            "regla_emprendimientos_mujeres_mipyme": regla_emp,
+                            "observaciones_recomendaciones": obs_rec
                         }
                         try:
                             obtener_cliente_supabase().table("licitaciones_secop").insert(nueva_lic).execute()
-                            for k in ['api_entidad', 'api_objeto', 'api_cuantia']:
+                            for k in ['api_entidad', 'api_objeto', 'api_cuantia', 'api_link']:
                                 if k in st.session_state: del st.session_state[k]
-                            st.success(f"✅ ¡Guardado con éxito!")
+                            st.success("✅ ¡Proceso registrado con éxito!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al guardar: {e}")
@@ -186,7 +215,6 @@ def main():
                 razon_social = st.text_input("Razón Social Completa")
                 nit = st.text_input("NIT")
                 
-                st.write("**Datos Financieros RUP**")
                 ac = st.number_input("Activo Corriente", value=0.0, step=1000000.0)
                 pc = st.number_input("Pasivo Corriente", value=0.0, step=1000000.0)
                 at = st.number_input("Activo Total", value=0.0, step=1000000.0)
@@ -196,7 +224,7 @@ def main():
                 gi = st.number_input("Gastos de Intereses", value=0.0, step=1000000.0)
                 ct = st.number_input("Capital de Trabajo", value=0.0, step=1000000.0)
                 
-                if st.form_submit_button("Guardar Empresa en Base de Datos", type="primary"):
+                if st.form_submit_button("Guardar Empresa", type="primary"):
                     if alias and nit:
                         nueva_emp = {
                             "alias_codigo": alias, "razon_social": razon_social, "nit": nit, 
@@ -212,7 +240,7 @@ def main():
                             st.error(f"Error: {e}")
 
     # =====================================================================
-    # PANEL CENTRAL: EVALUACIÓN Y EMISIÓN PDF
+    # PANEL CENTRAL: EVALUACIÓN Y EMISIÓN PDF COMPLETA
     # =====================================================================
     licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
     if not licitaciones_validas: 
@@ -263,21 +291,10 @@ def main():
     st.divider()
 
     # =====================================================================
-    # 3. GENERACIÓN DIRECTA DE PDF
+    # 3. GENERACIÓN DIRECTA DE PDF COMPLETO
     # =====================================================================
-    st.header("3. Emisión de Informe Ejecutivo (PDF)")
-    link_oficial = st.text_input("Opcional: Pega el enlace permanente de SECOP para incluirlo en el PDF", placeholder="https://community.secop.gov.co/Public/Tendering...")
-    
-    dic_licitacion = {
-        "numero_interno": licitacion_actual.get('numero_interno', ''),
-        "numero_proceso": licitacion_actual.get('numero_proceso', ''),
-        "entidad": licitacion_actual.get('entidad', ''),
-        "objeto": licitacion_actual.get('objeto', ''),
-        "cuantia_presupuesto": licitacion_actual.get('cuantia_presupuesto', 0),
-        "modalidad": licitacion_actual.get('modalidad', ''),
-        "fecha_registro": datetime.date.today().strftime("%d/%m/%Y"),
-        "link_secop": link_oficial
-    }
+    st.header("3. Emisión de Informe Ejecutivo en PDF")
+    st.info("El PDF incorporará automáticamente los hitos, la experiencia y los enlaces oficiales guardados en este proceso.")
     
     tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
     dic_simulacion = {
@@ -288,14 +305,15 @@ def main():
 
     try:
         pdf_bytes = generar_informe_ejecutivo_pdf(
-            licitacion=dic_licitacion,
+            licitacion=licitacion_actual,
+            simulination=dic_simulacion, iface=None,
             simulacion=dic_simulacion,
             integrantes=[]
         )
         st.download_button(
-            label="⬇️ Descargar Informe Ejecutivo (PDF)",
+            label="⬇️ Descargar Informe Ejecutivo Completo (PDF)",
             data=pdf_bytes,
-            file_name=f"Informe_{licitacion_actual.get('numero_proceso', '0')}.pdf",
+            file_name=f"Informe_Completo_{licitacion_actual.get('numero_proceso', '0')}.pdf",
             mime="application/pdf",
             type="primary"
         )
