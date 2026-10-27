@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import date, timedelta
 from supabase import create_client
 
@@ -51,16 +52,42 @@ except Exception as e:
 
 st.divider()
 
+st.divider()
+
 # ==========================================
-# 3. FORMULARIO DE INGRESO DE PROCESOS
+# 3. FORMULARIO AUTOMATIZADO CON API SECOP II
 # ==========================================
 with st.expander("➕ Agregar nueva licitación al sistema"):
+    st.markdown("### 🔍 Búsqueda Inteligente")
+    st.caption("Busca directamente en Datos Abiertos de Colombia ingresando el número de proceso.")
+    
+    col_b1, col_b2 = st.columns([3, 1])
+    exp_input = col_b1.text_input("Número de Expediente (Ej. FDL-CB-001-2026)")
+    
+    if col_b2.button("Buscar en SECOP II", type="secondary"):
+        if exp_input:
+            # URL oficial de la API de SECOP II (Datos Abiertos)
+            url = f"https://www.datos.gov.co/resource/jbjy-vk9h.json?referencia_del_proceso={exp_input.strip()}"
+            try:
+                respuesta = requests.get(url).json()
+                if len(respuesta) > 0:
+                    datos = respuesta[0]
+                    # Guardamos los datos temporalmente en la memoria de la sesión
+                    st.session_state['entidad_secop'] = datos.get('entidad', '')
+                    st.success(f"✅ Proceso encontrado: {datos.get('entidad', '')}")
+                else:
+                    st.warning("⚠️ No se encontró el proceso en SECOP II. Ingresa los datos manualmente.")
+            except Exception as e:
+                st.error("Error al conectar con la API estatal.")
+
+    st.markdown("### Datos del Proceso")
     with st.form("form_nuevo_proceso", clear_on_submit=True):
-        st.markdown("### Datos del proceso SECOP II")
-        
         col1, col2 = st.columns(2)
-        expediente = col1.text_input("Número de Expediente (Ej. FDL-CB-001-2026)")
-        entidad = col2.text_input("Entidad Contratante")
+        expediente = col1.text_input("Número de Expediente", value=exp_input)
+        
+        # Leemos la entidad si fue encontrada por la API, si no, queda en blanco
+        entidad_previa = st.session_state.get('entidad_secop', '')
+        entidad = col2.text_input("Entidad Contratante", value=entidad_previa)
         
         col3, col4, col5 = st.columns(3)
         etapa = col3.selectbox("Etapa Actual", ["Borrador", "Presentación Ofertas", "Evaluación", "Adjudicado"])
@@ -71,22 +98,21 @@ with st.expander("➕ Agregar nueva licitación al sistema"):
         
         if btn_guardar:
             if expediente.strip() == "" or entidad.strip() == "":
-                st.warning("⚠️ Debes ingresar al menos el Expediente y la Entidad para guardar.")
+                st.warning("⚠️ Debes ingresar al menos el Expediente y la Entidad.")
             else:
                 nuevo_registro = {
                     "Expediente": expediente,
                     "Entidad": entidad,
                     "Etapa Actual": etapa,
-                    # Convertimos las fechas a texto (formato YYYY-MM-DD) para que Supabase las reciba sin error
                     "Cierre Observaciones": str(cierre_obs),
                     "Cierre de Ofertas": str(cierre_ofertas)
                 }
-                
                 try:
-                    # Inserción en la base de datos
                     supabase.table("procesos_secop").insert(nuevo_registro).execute()
+                    # Limpiamos la memoria temporal tras guardar con éxito
+                    if 'entidad_secop' in st.session_state: 
+                        del st.session_state['entidad_secop']
                     st.success(f"✅ ¡El proceso {expediente} se registró correctamente!")
-                    # Recarga la página automáticamente para actualizar la tabla de arriba
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error al guardar en Supabase: {e}")
