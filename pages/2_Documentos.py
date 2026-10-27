@@ -16,6 +16,7 @@ with st.form("form_pdf"):
     num_proceso = col2.text_input("Número de Proceso / Expediente")
     
     objeto = st.text_area("Objeto del Contrato")
+    link_secop = st.text_input("Enlace directo a SECOP II (URL)")
     
     col3, col4 = st.columns(2)
     presupuesto = col3.number_input("Presupuesto Oficial (COP)", min_value=0, value=0, step=1000000)
@@ -30,16 +31,17 @@ with st.form("form_pdf"):
 
 if btn_generar:
     # 1. Empaquetamos los datos en los diccionarios que exige tu script
-    dic_licitacion = {
-        "numero_interno": num_proceso,
-        "numero_proceso": num_proceso,
-        "entidad": entidad,
-        "objeto": objeto,
-        "cuantia_presupuesto": presupuesto,
-        "modalidad": modalidad,
-        "fecha_registro": datetime.date.today().strftime("%d/%m/%Y")
-    }
-    
+   dic_licitacion = {
+     "numero_interno": num_proceso,
+     "numero_proceso": num_proceso,
+     "entidad": entidad,
+     "objeto": objeto,
+     "cuantia_presupuesto": presupuesto,
+     "modalidad": modalidad,
+     "fecha_registro": datetime.date.today().strftime("%d/%m/%Y"),
+     "link_secop": link_secop  # <--- Nueva variable agregada
+ }
+      
     dic_simulacion = {
         "nombre_proponente": nombre_proponente,
         "estado_global": estado_global,
