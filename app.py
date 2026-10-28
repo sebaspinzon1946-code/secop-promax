@@ -1,9 +1,10 @@
 """
-Módulo Único: Centro de Comando (Buscador SECOP + Web Scraper, Evaluador UT y Emisión PDF Completa)
+Módulo Único: Centro de Comando (Buscador SECOP + Web Scraper, Evaluador UT, Migrador Temporal y Emisión PDF Completa)
 """
 
 import os
 import re
+import math
 import datetime
 from dotenv import load_dotenv
 load_dotenv()
@@ -353,7 +354,6 @@ def selector_calendario(etiqueta: str, clave_memoria: str) -> Optional[datetime.
     except TypeError: return st.date_input(etiqueta, value=val_def)
 
 def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[datetime.time] = None) -> Optional[str]:
-    """Convierte la fecha en un formato SQL válido. Devuelve None (NULL) si está vacía para evitar errores de sintaxis en DBs."""
     if not fecha_obj: 
         return None
     f_str = fecha_obj.strftime("%Y-%m-%d")
@@ -370,7 +370,132 @@ def main():
     empresas, licitaciones = cargar_datos_base()
     
     with st.sidebar:
-        with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=True):
+        # =======================================================
+        # ⚠️ MÓDULO TEMPORAL: MIGRACIÓN MASIVA EXCEL (49 COLUMNAS)
+        # =======================================================
+        with st.expander("📥 Migración Masiva Excel (Única vez)", expanded=True):
+            st.info("Sube tu archivo Excel para cargar todos los procesos con sus 12 secciones y links.")
+            archivo_excel = st.file_uploader("Seleccionar archivo Excel", type=["xlsx", "xls"])
+            
+            if archivo_excel and st.button("🚀 Iniciar Migración Completa", type="primary", use_container_width=True):
+                cliente = obtener_cliente_supabase()
+                if not cliente:
+                    st.error("No hay conexión activa con Supabase.")
+                else:
+                    try:
+                        df = pd.read_excel(archivo_excel, sheet_name="MATRIZ GENERAL", header=4)
+                        procesos_existentes = {
+                            str(lic.get("numero_proceso", "")).strip()
+                            for lic in licitaciones if isinstance(lic, dict)
+                        }
+                        
+                        def parse_num(val):
+                            if pd.isna(val):
+                                return 0.0
+                            try:
+                                s = str(val).replace("$", "").replace(",", ".").strip()
+                                f = float(s)
+                                return 0.0 if (math.isnan(f) or math.isinf(f)) else f
+                            except Exception:
+                                return 0.0
+                                
+                        def parse_str(val):
+                            if pd.isna(val):
+                                return "N/A"
+                            s = str(val).strip()
+                            return "N/A" if s.lower() in ['nan', 'none', 'nat', ''] else s
+                            
+                        def parse_date(val):
+                            if pd.isna(val) or str(val).strip().lower() in ['nat', 'nan', 'n/a', 'none', '']: 
+                                return None
+                            try:
+                                return pd.to_datetime(val).strftime('%Y-%m-%d')
+                            except Exception:
+                                return None
+
+                        nuevos_registros = []
+                        actualizados = 0
+                        
+                        for _, fila in df.iterrows():
+                            if pd.isna(fila.iloc[3]):
+                                continue
+                            num_proc = str(fila.iloc[3]).strip()
+                            if not num_proc or num_proc.lower() in ['nan', 'none']:
+                                continue
+                                
+                            reg = {
+                                "numero_interno": int(parse_num(fila.iloc[0])),
+                                "fecha_registro": parse_date(fila.iloc[1]) or datetime.date.today().strftime("%Y-%m-%d"),
+                                "entidad": parse_str(fila.iloc[2]),
+                                "numero_proceso": num_proc,
+                                "objeto": parse_str(fila.iloc[4]),
+                                "modalidad": parse_str(fila.iloc[5]),
+                                "cuantia_presupuesto": parse_num(fila.iloc[6]),
+                                "etapa_actual": parse_str(fila.iloc[7]),
+                                "estado_revision": parse_str(fila.iloc[8]),
+                                "lugar_ejecucion": parse_str(fila.iloc[9]),
+                                "tiempo_ejecucion": parse_str(fila.iloc[10]),
+                                "fecha_manifestacion_interes": parse_date(fila.iloc[11]),
+                                "fecha_sorteo": parse_date(fila.iloc[12]),
+                                "fecha_limitacion_mipyme": parse_date(fila.iloc[13]),
+                                "fecha_obs_prepliego": parse_date(fila.iloc[14]),
+                                "fecha_obs_pliego_def": parse_date(fila.iloc[15]),
+                                "fecha_presentacion_oferta": parse_date(fila.iloc[16]),
+                                "codigos_unspsc_req": parse_str(fila.iloc[17]),
+                                "cant_codigos_unspsc_req": parse_num(fila.iloc[18]),
+                                "estampillas": parse_str(fila.iloc[19]),
+                                "req_liquidez_min": parse_num(fila.iloc[20]),
+                                "req_endeudamiento_max": parse_num(fila.iloc[21]),
+                                "req_cobertura_intereses_min": parse_num(fila.iloc[22]),
+                                "req_capital_trabajo_cop": parse_num(fila.iloc[23]),
+                                "req_rentabilidad_patrimonio_min": parse_num(fila.iloc[24]),
+                                "req_rentabilidad_activo_min": parse_num(fila.iloc[25]),
+                                "resumen_requerimientos_generales": parse_str(fila.iloc[26]),
+                                "exp_general_contratos": parse_str(fila.iloc[27]),
+                                "exp_general_descripcion": parse_str(fila.iloc[28]),
+                                "exp_especifica_contratos": parse_str(fila.iloc[29]),
+                                "exp_especifica_descripcion": parse_str(fila.iloc[30]),
+                                "regla_emprendimientos_mujeres_mipyme": parse_str(fila.iloc[31]),
+                                "metodos_oferta_economica": parse_str(fila.iloc[32]),
+                                "factores_tecnicos_ponderables": parse_str(fila.iloc[33]),
+                                "puntos_tecnica": parse_num(fila.iloc[34]),
+                                "puntos_economica": parse_num(fila.iloc[35]),
+                                "puntos_industria_nacional": parse_num(fila.iloc[36]),
+                                "puntos_discapacidad": parse_num(fila.iloc[37]),
+                                "puntos_mipyme": parse_num(fila.iloc[38]),
+                                "puntos_mujeres": parse_num(fila.iloc[39]),
+                                "total_puntos": parse_num(fila.iloc[40]),
+                                "responsable_proceso": parse_str(fila.iloc[41]),
+                                "observaciones_recomendaciones": parse_str(fila.iloc[42]),
+                                "link_secop": parse_str(fila.iloc[43]),
+                                "poliza": parse_str(fila.iloc[44]),
+                                "poliza_seriedad_oferta": parse_str(fila.iloc[45]),
+                                "fecha_solicitud_poliza": parse_date(fila.iloc[46]),
+                                "vr_poliza": parse_num(fila.iloc[47]),
+                                "estado_poliza": parse_str(fila.iloc[48])
+                            }
+                            
+                            if num_proc in procesos_existentes:
+                                cliente.table("licitaciones_secop").update(reg).eq("numero_proceso", num_proc).execute()
+                                actualizados += 1
+                            else:
+                                nuevos_registros.append(reg)
+                                procesos_existentes.add(num_proc)
+                                
+                        if nuevos_registros:
+                            cliente.table("licitaciones_secop").insert(nuevos_registros).execute()
+                            
+                        st.success(f"✅ ¡Migración exitosa! Nuevos insertados: {len(nuevos_registros)} | Actualizados: {actualizados}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error durante la migración: {e}")
+
+        st.divider()
+
+        # =======================================================
+        # MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS
+        # =======================================================
+        with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=False):
             exp_buscar = st.text_input("Expediente (Ej. FDLSC-LP-006-2026)")
             link_rastreo = st.text_input("Opcional: Link directo SECOP II", value=st.session_state.get('api_link', ''))
             
@@ -608,8 +733,6 @@ def main():
     # 3. GENERACIÓN DIRECTA DE PDF COMPLETO
     # =====================================================================
     st.header("3. Emisión de Informe Ejecutivo en PDF")
-    
-    # Preparamos los datos para que el PDF imprima "N/A" en lugar de "None"
     lic_limpia_pdf = {k: ("N/A" if v is None else v) for k, v in licitacion_actual.items()}
     
     tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
