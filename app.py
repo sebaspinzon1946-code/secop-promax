@@ -1,10 +1,9 @@
 """
-Módulo Único: Centro de Comando (Buscador SECOP + Web Scraper, Evaluador UT, Migrador Temporal y Emisión PDF Completa)
+Módulo Único: Centro de Comando SECOP II (Con Migrador de UNSPSC RUP de Empresas y Emisión PDF)
 """
 
 import os
 import re
-import math
 import datetime
 from dotenv import load_dotenv
 load_dotenv()
@@ -80,7 +79,7 @@ LISTA_POLIZA = ["Por definir", "Sí", "No"]
 LISTA_ESTADO_POLIZA = ["Pendiente", "Solicitada", "Expedida", "Aprobada", "Rechazada", "No aplica"]
 
 # =====================================================================
-# 1. CONEXIÓN A SUPABASE Y UTILIDADES DE FORMATO EN MILES
+# 1. CONEXIÓN A SUPABASE Y UTILIDADES DE FORMATO
 # =====================================================================
 def obtener_cliente_supabase():
     url = "https://mqcjmrdznbgfhpmnmvns.supabase.co"
@@ -133,14 +132,120 @@ def limpiar_moneda_input(texto: Any) -> int:
     except Exception:
         return 0
 
-def limpiar_codigos_unspsc(texto_crudo: str) -> str:
-    if not texto_crudo:
+def limpiar_codigos_unspsc(texto_crudo: Any) -> str:
+    """Extrae todos los códigos UNSPSC de 8 dígitos (o 6 dígitos de clase completando con 00) y los separa por '; '."""
+    if texto_crudo is None:
         return ""
-    codigos_8_digitos = list(dict.fromkeys(re.findall(r'\b(\d{8})\b', str(texto_crudo))))
-    if codigos_8_digitos:
-        return "; ".join(codigos_8_digitos)
-    partes = [c.strip() for c in str(texto_crudo).replace(';', '\n').split('\n') if c.strip()]
-    return "; ".join(partes)
+    s = str(texto_crudo).replace(".0", "")
+    codigos_8 = list(dict.fromkeys(re.findall(r'\b(\d{8})\b', s)))
+    if codigos_8:
+        return "; ".join(codigos_8)
+    codigos_6 = list(dict.fromkeys([c + "00" for c in re.findall(r'\b(\d{6})\b', s)]))
+    if codigos_6:
+        return "; ".join(codigos_6)
+    return ""
+
+def extraer_unspsc_rup_excel(archivo_excel) -> Dict[str, str]:
+    """Lee la hoja 'UNSPSC RUP' del Excel (por filas, por columnas o formato tabla) y devuelve {Empresa: 'cod1; cod2...'}."""
+    xls = pd.ExcelFile(archivo_excel)
+    hoja_obj = None
+    for nombre_h in xls.sheet_names:
+        if "UNSPSC" in nombre_h.upper():
+            hoja_obj = nombre_h
+            break
+    if not hoja_obj:
+        for nombre_h in xls.sheet_names:
+            if "RUP" in nombre_h.upper() or "EMPRESA" in nombre_h.upper():
+                hoja_obj = nombre_h
+                break
+    if not hoja_obj:
+        return {}
+
+    df_raw = pd.read_excel(archivo_excel, sheet_name=hoja_obj, header=None)
+    palabras_ignorar = {
+        "CODIGO", "CÓDIGO", "CODIGOS", "CÓDIGOS", "UNSPSC", "DESCRIPCION", "DESCRIPCIÓN",
+        "CLASE", "PRODUCTO", "FAMILIA", "SEGMENTO", "EMPRESA", "EMPRESAS", "PROPONENTE",
+        "RUP", "N/A", "NAN", "NONE", "ITEM", "ÍTEM", "NO.", "N°", "TOTAL", "CANTIDAD"
+    }
+
+    def es_nombre_empresa(txt: str) -> bool:
+        t = str(txt).strip().upper()
+        if not t or len(t) < 3 or t in palabras_ignorar:
+            return False
+        if re.fullmatch(r'[\d\W_]+', t):
+            return False
+        if any(p in t for p in ["CLASIFICADOR", "BIENES Y SERVICIOS", "MATRIZ", "INFORME", "CODIGOS UNSPSC"]):
+            return False
+        return True
+
+    resultado: Dict[str, List[str]] = {}
+
+    # 1. Revisar si cada fila tiene el nombre de la empresa y sus códigos en una celda (separados por ; o coma)
+    for _, row in df_raw.iterrows():
+        textos_fila = []
+        codigos_fila = []
+        for val in row.values:
+            if pd.isna(val):
+                continue
+            c_str = limpiar_codigos_unspsc(val)
+            if c_str:
+                codigos_fila.extend([x.strip() for x in c_str.split(";") if x.strip()])
+            elif es_nombre_empresa(str(val)):
+                textos_fila.append(str(val).strip())
+        if textos_fila and len(codigos_fila) >= 2:
+            emp_nom = textos_fila[0].upper()
+            resultado.setdefault(emp_nom, []).extend(codigos_fila)
+
+    if resultado:
+        return {k: "; ".join(list(dict.fromkeys(v))) for k, v in resultado.items() if v}
+
+    # 2. Revisar si cada columna corresponde a una empresa (encabezado arriba y códigos hacia abajo)
+    cols_con_codigos = []
+    for col_idx in df_raw.columns:
+        serie_col = df_raw[col_idx].dropna()
+        cods_col = []
+        posibles_headers = []
+        for val in serie_col.values:
+            c_str = limpiar_codigos_unspsc(val)
+            if c_str:
+                cods_col.extend([x.strip() for x in c_str.split(";") if x.strip()])
+            elif not cods_col and es_nombre_empresa(str(val)):
+                posibles_headers.append(str(val).strip().upper())
+        if len(cods_col) >= 1:
+            cols_con_codigos.append((col_idx, posibles_headers[-1] if posibles_headers else f"COL_{col_idx}", cods_col))
+
+    if len(cols_con_codigos) >= 2:
+        for _, header_emp, cods_col in cols_con_codigos:
+            resultado.setdefault(header_emp, []).extend(cods_col)
+        return {k: "; ".join(list(dict.fromkeys(v))) for k, v in resultado.items() if v}
+
+    # 3. Formato largo (Columna Empresa + Columna Código UNSPSC)
+    if len(cols_con_codigos) == 1:
+        col_cod = cols_con_codigos[0][0]
+        col_emp = max(0, col_cod - 1)
+        df_sub = df_raw[[col_emp, col_cod]].copy()
+        df_sub[col_emp] = df_sub[col_emp].ffill()
+        for _, r in df_sub.iterrows():
+            emp_val = str(r[col_emp]).strip().upper()
+            c_str = limpiar_codigos_unspsc(r[col_cod])
+            if es_nombre_empresa(emp_val) and c_str:
+                resultado.setdefault(emp_val, []).extend([x.strip() for x in c_str.split(";") if x.strip()])
+
+    return {k: "; ".join(list(dict.fromkeys(v))) for k, v in resultado.items() if v}
+
+def emparejar_alias_empresa(nombre_excel: str, empresas_db: List[Dict[str, Any]]) -> Optional[str]:
+    """Busca a qué alias_codigo de Supabase corresponde el nombre encontrado en el Excel."""
+    n_exc = re.sub(r'[^A-Z0-9]', '', nombre_excel.upper())
+    for emp in empresas_db:
+        alias = str(emp.get("alias_codigo", "")).strip()
+        razon = str(emp.get("razon_social", "")).strip()
+        a_norm = re.sub(r'[^A-Z0-9]', '', alias.upper())
+        r_norm = re.sub(r'[^A-Z0-9]', '', razon.upper())
+        if a_norm and (a_norm == n_exc or a_norm in n_exc or n_exc in a_norm):
+            return alias
+        if r_norm and (r_norm == n_exc or r_norm in n_exc or n_exc in r_norm):
+            return alias
+    return None
 
 def parsear_fecha_hora_secop(valor_str: Any) -> Tuple[Optional[datetime.date], Optional[datetime.time]]:
     if not valor_str or str(valor_str).strip() in ["", "N/A", "None", "nan"]:
@@ -302,7 +407,7 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
     return encontrado
 
 # =====================================================================
-# 2. MOTOR MATEMÁTICO FINANCIERO Y AYUDANTES DE FECHAS
+# 2. MOTOR MATEMÁTICO FINANCIERO Y CRUCE DE CÓDIGOS UNSPSC (RUP)
 # =====================================================================
 def evaluar_indicador(nombre, regla, exigido, valor_consolidado, es_porcentaje=False, es_moneda=False, indeterminado=False):
     if exigido is None or exigido == "" or float(exigido) == 0:
@@ -317,6 +422,44 @@ def evaluar_indicador(nombre, regla, exigido, valor_consolidado, es_porcentaje=F
         elif regla == "<=": estado = "CUMPLE" if float(valor_consolidado) <= float(exigido) else "NO CUMPLE"
         else: estado = "REVISAR"
     return {"indicador": nombre, "regla": regla, "exigido_fmt": exigido_fmt, "consolidado_fmt": consolidado_fmt, "estado": estado}
+
+def evaluar_cruce_unspsc(licitacion: Dict[str, Any], integrantes_seleccionados: List[Dict[str, Any]]) -> Dict[str, Any]:
+    cod_req_raw = str(licitacion.get("codigos_unspsc_req", ""))
+    lista_req = list(dict.fromkeys(re.findall(r'\b(\d{8})\b', cod_req_raw)))
+    min_exigido = int(float(licitacion.get("cant_codigos_unspsc_req", 0) or 0))
+
+    set_rup_exacto = set()
+    set_rup_clase = set()
+    for emp in integrantes_seleccionados:
+        cod_emp_raw = str(emp.get("codigos_unspsc_rup", ""))
+        for c in re.findall(r'\b(\d{8})\b', cod_emp_raw):
+            set_rup_exacto.add(c)
+            set_rup_clase.add(c[:6] + "00")
+
+    coincidentes = []
+    faltantes = []
+    for c_req in lista_req:
+        if c_req in set_rup_exacto or (c_req[:6] + "00") in set_rup_clase:
+            coincidentes.append(c_req)
+        else:
+            faltantes.append(c_req)
+
+    cant_cumplidos = len(coincidentes)
+    if not lista_req and min_exigido == 0:
+        estado_unspsc = "NO EXIGIDO"
+    elif min_exigido > 0:
+        estado_unspsc = "CUMPLE" if cant_cumplidos >= min_exigido else "NO CUMPLE"
+    else:
+        estado_unspsc = "CUMPLE" if (cant_cumplidos == len(lista_req) and len(lista_req) > 0) else "REVISAR"
+
+    return {
+        "total_publicados": len(lista_req),
+        "min_exigido": min_exigido,
+        "codigos_cumplidos": cant_cumplidos,
+        "coincidentes": coincidentes,
+        "faltantes": faltantes,
+        "estado_unspsc": estado_unspsc
+    }
 
 def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_figura="UNION_TEMPORAL"):
     ac_cons = pc_cons = at_cons = pt_cons = pat_cons = uo_cons = gi_cons = ct_cons = 0.0
@@ -346,7 +489,15 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_fig
     ]
     estados = [item["estado"] for item in comparativo if item["estado"] != "NO EXIGIDO"]
     estado_global = "NO CUMPLE" if "NO CUMPLE" in estados else "REVISAR" if "REVISAR" in estados else "CUMPLE"
-    return {"tipo_figura": tipo_figura, "comparativo_indicadores": comparativo, "estado_global": estado_global}
+    
+    cruce_unspsc = evaluar_cruce_unspsc(licitacion, integrantes_seleccionados)
+    return {
+        "tipo_figura": tipo_figura,
+        "comparativo_indicadores": comparativo,
+        "estado_global": estado_global,
+        "cruce_unspsc": cruce_unspsc,
+        "codigos_cumplidos": cruce_unspsc["codigos_cumplidos"]
+    }
 
 def selector_calendario(etiqueta: str, clave_memoria: str) -> Optional[datetime.date]:
     val_def = st.session_state.get(clave_memoria, None)
@@ -371,137 +522,61 @@ def main():
     
     with st.sidebar:
         # =======================================================
-        # ⚠️ MÓDULO TEMPORAL: MIGRACIÓN MASIVA EXCEL (49 COLUMNAS)
+        # ⚠️ MÓDULO TEMPORAL: MIGRACIÓN UNSPSC RUP DE EMPRESAS
         # =======================================================
-        with st.expander("📥 Migración Masiva Excel (Única vez)", expanded=True):
-            st.info("Sube tu archivo Excel para cargar todos los procesos con sus 12 secciones y links.")
-            archivo_excel = st.file_uploader("Seleccionar archivo Excel", type=["xlsx", "xls"])
-            
-            if archivo_excel and st.button("🚀 Iniciar Migración Completa", type="primary", use_container_width=True):
-                cliente = obtener_cliente_supabase()
-                if not cliente:
-                    st.error("No hay conexión activa con Supabase.")
+        with st.expander("📥 Migrar UNSPSC RUP de Empresas (Excel)", expanded=True):
+            st.info("Sube tu Excel para extraer los códigos de la hoja 'UNSPSC RUP' y asignarlos a tus empresas.")
+            archivo_rup = st.file_uploader("Seleccionar Excel", type=["xlsx", "xls"], key="up_rup")
+            if archivo_rup:
+                mapa_extraido = extraer_unspsc_rup_excel(archivo_rup)
+                if not mapa_extraido:
+                    st.warning("No se detectaron códigos en la hoja UNSPSC RUP.")
                 else:
-                    try:
-                        df = pd.read_excel(archivo_excel, sheet_name="MATRIZ GENERAL", header=4)
-                        procesos_existentes = {
-                            str(lic.get("numero_proceso", "")).strip()
-                            for lic in licitaciones if isinstance(lic, dict)
-                        }
-                        
-                        def parse_num(val):
-                            """Convierte a int si el número es exacto (ej. 8.0 -> 8) o a float si tiene decimales."""
-                            if pd.isna(val):
-                                return 0
-                            try:
-                                s = str(val).replace("$", "").replace(",", ".").strip()
-                                f = float(s)
-                                if math.isnan(f) or math.isinf(f):
-                                    return 0
-                                return int(f) if f.is_integer() else f
-                            except Exception:
-                                return 0
+                    st.caption(f"Se detectaron **{len(mapa_extraido)}** empresas con códigos en el Excel:")
+                    aliases_db = [str(e.get("alias_codigo", "")) for e in empresas if isinstance(e, dict)]
+                    asignaciones = {}
+                    for idx_e, (emp_excel, cadena_cods) in enumerate(mapa_extraido.items()):
+                        cant_c = len([x for x in cadena_cods.split(";") if x.strip()])
+                        alias_sug = emparejar_alias_empresa(emp_excel, empresas)
+                        opciones_ vinc = ["(Crear como nueva empresa)"] + aliases_db
+                        idx_sel = opciones_vinc.index(alias_sug) if alias_sug in opciones_vinc else 0
+                        sel_destino = st.selectbox(
+                            f"🔗 '{emp_excel}' ({cant_c} códs) ➔",
+                            options=opciones_vinc,
+                            index=idx_sel,
+                            key=f"map_emp_{idx_e}"
+                        )
+                        asignaciones[emp_excel] = (sel_destino, cadena_cods)
 
-                        def parse_int(val):
-                            """Garantiza estrictamente un entero puro (int) para columnas integer en Supabase."""
-                            return int(round(float(parse_num(val))))
-                                
-                        def parse_str(val):
-                            if pd.isna(val):
-                                return "N/A"
-                            s = str(val).strip()
-                            return "N/A" if s.lower() in ['nan', 'none', 'nat', ''] else s
-                            
-                        def parse_date(val):
-                            if pd.isna(val) or str(val).strip().lower() in ['nat', 'nan', 'n/a', 'none', '']: 
-                                return None
-                            try:
-                                return pd.to_datetime(val).strftime('%Y-%m-%d')
-                            except Exception:
-                                return None
-
-                        nuevos_registros = []
-                        actualizados = 0
-                        
-                        for _, fila in df.iterrows():
-                            if pd.isna(fila.iloc[3]):
-                                continue
-                            num_proc = str(fila.iloc[3]).strip()
-                            if not num_proc or num_proc.lower() in ['nan', 'none']:
-                                continue
-                                
-                            reg = {
-                                "numero_interno": parse_int(fila.iloc[0]),
-                                "fecha_registro": parse_date(fila.iloc[1]) or datetime.date.today().strftime("%Y-%m-%d"),
-                                "entidad": parse_str(fila.iloc[2]),
-                                "numero_proceso": num_proc,
-                                "objeto": parse_str(fila.iloc[4]),
-                                "modalidad": parse_str(fila.iloc[5]),
-                                "cuantia_presupuesto": parse_num(fila.iloc[6]),
-                                "etapa_actual": parse_str(fila.iloc[7]),
-                                "estado_revision": parse_str(fila.iloc[8]),
-                                "lugar_ejecucion": parse_str(fila.iloc[9]),
-                                "tiempo_ejecucion": parse_str(fila.iloc[10]),
-                                "fecha_manifestacion_interes": parse_date(fila.iloc[11]),
-                                "fecha_sorteo": parse_date(fila.iloc[12]),
-                                "fecha_limitacion_mipyme": parse_date(fila.iloc[13]),
-                                "fecha_obs_prepliego": parse_date(fila.iloc[14]),
-                                "fecha_obs_pliego_def": parse_date(fila.iloc[15]),
-                                "fecha_presentacion_oferta": parse_date(fila.iloc[16]),
-                                "codigos_unspsc_req": parse_str(fila.iloc[17]),
-                                "cant_codigos_unspsc_req": parse_int(fila.iloc[18]),
-                                "estampillas": parse_str(fila.iloc[19]),
-                                "req_liquidez_min": parse_num(fila.iloc[20]),
-                                "req_endeudamiento_max": parse_num(fila.iloc[21]),
-                                "req_cobertura_intereses_min": parse_num(fila.iloc[22]),
-                                "req_capital_trabajo_cop": parse_num(fila.iloc[23]),
-                                "req_rentabilidad_patrimonio_min": parse_num(fila.iloc[24]),
-                                "req_rentabilidad_activo_min": parse_num(fila.iloc[25]),
-                                "resumen_requerimientos_generales": parse_str(fila.iloc[26]),
-                                "exp_general_contratos": parse_str(fila.iloc[27]),
-                                "exp_general_descripcion": parse_str(fila.iloc[28]),
-                                "exp_especifica_contratos": parse_str(fila.iloc[29]),
-                                "exp_especifica_descripcion": parse_str(fila.iloc[30]),
-                                "regla_emprendimientos_mujeres_mipyme": parse_str(fila.iloc[31]),
-                                "metodos_oferta_economica": parse_str(fila.iloc[32]),
-                                "factores_tecnicos_ponderables": parse_str(fila.iloc[33]),
-                                "puntos_tecnica": parse_num(fila.iloc[34]),
-                                "puntos_economica": parse_num(fila.iloc[35]),
-                                "puntos_industria_nacional": parse_num(fila.iloc[36]),
-                                "puntos_discapacidad": parse_num(fila.iloc[37]),
-                                "puntos_mipyme": parse_num(fila.iloc[38]),
-                                "puntos_mujeres": parse_num(fila.iloc[39]),
-                                "total_puntos": parse_num(fila.iloc[40]),
-                                "responsable_proceso": parse_str(fila.iloc[41]),
-                                "observaciones_recomendaciones": parse_str(fila.iloc[42]),
-                                "link_secop": parse_str(fila.iloc[43]),
-                                "poliza": parse_str(fila.iloc[44]),
-                                "poliza_seriedad_oferta": parse_str(fila.iloc[45]),
-                                "fecha_solicitud_poliza": parse_date(fila.iloc[46]),
-                                "vr_poliza": parse_num(fila.iloc[47]),
-                                "estado_poliza": parse_str(fila.iloc[48])
-                            }
-                            
-                            if num_proc in procesos_existentes:
-                                cliente.table("licitaciones_secop").update(reg).eq("numero_proceso", num_proc).execute()
-                                actualizados += 1
-                            else:
-                                nuevos_registros.append(reg)
-                                procesos_existentes.add(num_proc)
-                                
-                        if nuevos_registros:
-                            cliente.table("licitaciones_secop").insert(nuevos_registros).execute()
-                            
-                        st.success(f"✅ ¡Migración exitosa! Nuevos insertados: {len(nuevos_registros)} | Actualizados: {actualizados}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error durante la migración: {e}")
-
-        st.divider()
-
+                    if st.button("🚀 Guardar UNSPSC RUP en Supabase", type="primary", use_container_width=True):
+                        cliente = obtener_cliente_supabase()
+                        actualizadas = 0
+                        creadas = 0
+                        try:
+                            for emp_excel, (destino, cadena_cods) in asignaciones.items():
+                                if destino == "(Crear como nueva empresa)":
+                                    nuevo_alias = emp_excel[:25].strip().upper()
+                                    cliente.table("empresas_proponentes").insert({
+                                        "alias_codigo": nuevo_alias,
+                                        "razon_social": emp_excel.strip().upper(),
+                                        "nit": "PENDIENTE",
+                                        "codigos_unspsc_rup": cadena_cods
+                                    }).execute()
+                                    creadas += 1
+                                else:
+                                    cliente.table("empresas_proponentes").update({
+                                        "codigos_unspsc_rup": cadena_cods
+                                    }).eq("alias_codigo", destino).execute()
+                                    actualizadas += 1
+                            st.success(f"✅ ¡Listo! Empresas actualizadas: {actualizadas} | Nuevas: {creadas}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al actualizar UNSPSC RUP: {e}")
         # =======================================================
+        # FIN DEL MÓDULO TEMPORAL
+        # =======================================================
+
         # MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS
-        # =======================================================
         with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=False):
             exp_buscar = st.text_input("Expediente (Ej. FDLSC-LP-006-2026)")
             link_rastreo = st.text_input("Opcional: Link directo SECOP II", value=st.session_state.get('api_link', ''))
@@ -661,30 +736,59 @@ def main():
                         except Exception as e:
                             st.error(f"Error al guardar: {e}")
 
-        # MÓDULO 2: REGISTRO MANUAL DE EMPRESAS
+        # MÓDULO 2: REGISTRO / ACTUALIZACIÓN DE EMPRESAS (RUP + UNSPSC)
         with st.expander("🏢 Registrar Nueva Empresa (RUP)"):
             with st.form("form_nueva_empresa", clear_on_submit=True):
                 alias = st.text_input("Alias (Ej. ZEKIA)")
+                razon_social = st.text_input("Razón Social Completa")
                 nit = st.text_input("NIT")
-                ac = st.number_input("Act. Corriente", value=0.0)
-                pc = st.number_input("Pas. Corriente", value=0.0)
-                at = st.number_input("Act. Total", value=0.0)
-                pt = st.number_input("Pas. Total", value=0.0)
-                pat = st.number_input("Patrimonio", value=0.0)
-                uo = st.number_input("Utilidad Op.", value=0.0)
-                gi = st.number_input("Gastos Int.", value=0.0)
-                ct = st.number_input("Cap. Trabajo", value=0.0)
-                if st.form_submit_button("Guardar Empresa"):
+                
+                st.write("**Indicadores Financieros RUP**")
+                ac = st.number_input("Act. Corriente", value=0.0, step=1000000.0)
+                pc = st.number_input("Pas. Corriente", value=0.0, step=1000000.0)
+                at = st.number_input("Act. Total", value=0.0, step=1000000.0)
+                pt = st.number_input("Pas. Total", value=0.0, step=1000000.0)
+                pat = st.number_input("Patrimonio", value=0.0, step=1000000.0)
+                uo = st.number_input("Utilidad Op.", value=0.0, step=1000000.0)
+                gi = st.number_input("Gastos Int.", value=0.0, step=1000000.0)
+                ct = st.number_input("Cap. Trabajo", value=0.0, step=1000000.0)
+                
+                st.write("**Clasificación UNSPSC del RUP**")
+                st.caption("Pega los códigos UNSPSC registrados en el RUP:")
+                unspsc_rup_raw = st.text_area("Códigos UNSPSC en RUP", height=120, placeholder="86101600; 86111500; 90111600...")
+                
+                if st.form_submit_button("💾 Guardar Empresa (RUP)", type="primary"):
                     if alias and nit:
+                        codigos_rup_limpios = limpiar_codigos_unspsc(unspsc_rup_raw)
+                        datos_emp = {
+                            "alias_codigo": alias.strip().upper(),
+                            "razon_social": razon_social.strip() if razon_social.strip() else alias.strip().upper(),
+                            "nit": nit.strip(),
+                            "activo_corriente": ac,
+                            "pasivo_corriente": pc,
+                            "activo_total": at,
+                            "pasivo_total": pt,
+                            "patrimonio": pat,
+                            "utilidad_operacional": uo,
+                            "gastos_intereses": gi,
+                            "capital_trabajo": ct,
+                            "codigos_unspsc_rup": codigos_rup_limpios if codigos_rup_limpios else "N/A"
+                        }
                         try:
-                            obtener_cliente_supabase().table("empresas_proponentes").insert({
-                                "alias_codigo": alias, "nit": nit, "activo_corriente": ac, "pasivo_corriente": pc, "activo_total": at, 
-                                "pasivo_total": pt, "patrimonio": pat, "utilidad_operacional": uo, "gastos_intereses": gi, "capital_trabajo": ct
-                            }).execute()
-                            st.success("✅ Empresa guardada.")
+                            cliente = obtener_cliente_supabase()
+                            aliases_existentes = {
+                                str(e.get("alias_codigo", "")).strip().upper()
+                                for e in empresas if isinstance(e, dict)
+                            }
+                            if alias.strip().upper() in aliases_existentes:
+                                cliente.table("empresas_proponentes").update(datos_emp).eq("alias_codigo", alias.strip().upper()).execute()
+                                st.success(f"✅ Empresa {alias.upper()} actualizada.")
+                            else:
+                                cliente.table("empresas_proponentes").insert(datos_emp).execute()
+                                st.success(f"✅ Empresa {alias.upper()} registrada.")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error: {e}")
+                            st.error(f"Error al guardar empresa: {e}")
 
     # =====================================================================
     # PANEL CENTRAL: EVALUACIÓN Y EMISIÓN PDF COMPLETA
@@ -730,10 +834,21 @@ def main():
 
     resultado_sim = consolidar_proponente_plural(licitacion_actual, integrantes_simulacion, tipo_figura)
     
+    # Visualización del Cruce de Códigos UNSPSC (Pliego vs. RUP)
+    cruce_u = resultado_sim["cruce_unspsc"]
+    st.subheader("🏷️ Cruce de Clasificación UNSPSC (Pliego vs. RUP)")
+    col_u1, col_u2, col_u3, col_u4 = st.columns(4)
+    col_u1.metric("Publicados en Proceso", cruce_u["total_publicados"])
+    col_u2.metric("Mínimo Exigido (Pliego)", cruce_u["min_exigido"])
+    col_u3.metric("Cumplidos en RUP", cruce_u["codigos_cumplidos"])
+    col_u4.metric("Estado UNSPSC", cruce_u["estado_unspsc"])
+    if cruce_u["coincidentes"]:
+        st.caption(f"**Códigos aportados por el RUP:** {'; '.join(cruce_u['coincidentes'])}")
+
     st.subheader("📊 Consolidado Financiero")
     df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
     st.dataframe(df_comp, use_container_width=True, hide_index=True)
-    st.info(f"DICTAMEN GLOBAL: **{resultado_sim['estado_global']}**")
+    st.info(f"DICTAMEN FINANCIERO GLOBAL: **{resultado_sim['estado_global']}**")
     st.divider()
 
     # =====================================================================
@@ -746,11 +861,13 @@ def main():
     dic_simulacion = {
         "nombre_proponente": f"{nombre_proponente} ({tipo_etiqueta})",
         "estado_global": resultado_sim['estado_global'],
-        "comparativo_indicadores": resultado_sim["comparativo_indicadores"]
+        "comparativo_indicadores": resultado_sim["comparativo_indicadores"],
+        "codigos_cumplidos": resultado_sim["codigos_cumplidos"],
+        "estado_unspsc": cruce_u["estado_unspsc"]
     }
 
     try:
-        pdf_bytes = generar_informe_ejecutivo_pdf(licitacion=lic_limpia_pdf, simulacion=dic_simulacion, integrantes=[])
+        pdf_bytes = generar_informe_ejecutivo_pdf(licitacion=lic_limpia_pdf, simulacion=dic_simulacion, integrantes=integrantes_simulacion)
         st.download_button(
             label="⬇️ Descargar Informe Ejecutivo Corporativo (12 Secciones)",
             data=pdf_bytes,
