@@ -119,12 +119,11 @@ def main():
                             presupuesto_str = datos.get('precio_base', datos.get('cuantia_proceso', datos.get('estimacion_del_presupuesto', 0)))
                             try: st.session_state['api_cuantia'] = float(presupuesto_str)
                             except ValueError: st.session_state['api_cuantia'] = 0.0
-                            
                             url_cruda = datos.get('urlproceso', '')
                             st.session_state['api_link'] = url_cruda.get('url', '') if isinstance(url_cruda, dict) else url_cruda
                             
-                            # Intentar extraer el código UNSPSC principal desde la API de SECOP
-                            st.session_state['api_unspsc'] = datos.get('codigo_principal_de_categoria', datos.get('codigo_principal_de_categori', ''))
+                            # Intentamos capturar los códigos que envíe la API
+                            st.session_state['api_unspsc'] = datos.get('codigo_principal_de_categoria', datos.get('codigos_unspsc', ''))
                             
                             st.success("✅ Datos extraídos.")
                         else: st.warning("⚠️ No encontrado en API.")
@@ -156,9 +155,9 @@ def main():
 
                 with t2:
                     st.write("**03 UNSPSC | 04 TRIBUTOS**")
-                    # Cambiado a un text_area para soportar cadenas largas como "86101600; 86101700; ..."
-                    unspsc = st.text_area("Códigos UNSPSC (Puedes pegar varios separados por ;)", value=st.session_state.get('api_unspsc', ''))
-                    cant_u = st.number_input("CANT. COD. REQ", value=0)
+                    # Caja de texto grande para pegar la columna entera de SECOP II
+                    unspsc_input = st.text_area("Códigos UNSPSC (Pega la columna completa aquí)", value=st.session_state.get('api_unspsc', ''), height=100)
+                    cant_u = st.number_input("Cantidad Mínima Requerida", value=0)
                     estampillas = st.text_area("Estampillas / Descuentos", value="N/A")
                     st.write("**05 FINANCIEROS (Pliego)**")
                     r_liq = st.number_input("Liquidez (>)", value=0.0, step=0.1)
@@ -203,6 +202,9 @@ def main():
 
                 if st.form_submit_button("💾 Guardar Proceso Completo", type="primary"):
                     if num_proceso and entidad:
+                        # Procesador inteligente de UNSPSC: Convierte saltos de línea en punto y coma
+                        unspsc_limpio = "; ".join([c.strip() for c in unspsc_input.replace(';', '\n').split('\n') if c.strip()])
+                        
                         nueva_lic = {
                             "numero_interno": num_interno, "fecha_registro": datetime.date.today().strftime("%Y-%m-%d"),
                             "numero_proceso": num_proceso, "entidad": entidad, "objeto": objeto, "modalidad": modalidad,
@@ -210,7 +212,7 @@ def main():
                             "lugar_ejecucion": lugar, "tiempo_ejecucion": tiempo,
                             "fecha_manifestacion_interes": f_int, "fecha_sorteo": f_sor, "fecha_limitacion_mipyme": f_mip,
                             "fecha_obs_prepliego": f_obsp, "fecha_obs_pliego_def": f_obsd, "fecha_presentacion_oferta": f_ofe,
-                            "codigos_unspsc_req": unspsc, "cant_codigos_unspsc_req": cant_u, "estampillas": estampillas,
+                            "codigos_unspsc_req": unspsc_limpio, "cant_codigos_unspsc_req": cant_u, "estampillas": estampillas,
                             "req_liquidez_min": r_liq, "req_endeudamiento_max": r_end, "req_cobertura_intereses_min": r_cob,
                             "req_capital_trabajo_cop": r_cap, "req_rentabilidad_patrimonio_min": r_rpat, "req_rentabilidad_activo_min": r_ract,
                             "resumen_requerimientos_generales": resumen, "exp_general_contratos": eg_cont, "exp_general_descripcion": eg_desc,
