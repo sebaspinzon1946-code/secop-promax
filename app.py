@@ -416,7 +416,7 @@ def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[da
 # =====================================================================
 def main():
     st.set_page_config(page_title="SECOP II ProMax", page_icon="⚖️", layout="wide")
-    st.title("⚖️ Procesos de Seleccion - SECOP II")
+    st.title("⚖️ Procesos de Selección - SECOP II")
     empresas, licitaciones = cargar_datos_base()
     
     with st.sidebar:
