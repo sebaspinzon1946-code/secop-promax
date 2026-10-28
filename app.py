@@ -513,7 +513,7 @@ def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[da
     return f_str
 
 # =====================================================================
-# 3. INTERFAZ ALL-IN-ONE
+# 3. INTERFAZ ALL-IN-ONE DEFINITIVA
 # =====================================================================
 def main():
     st.set_page_config(page_title="SECOP II ProMax", page_icon="⚖️", layout="wide")
@@ -538,7 +538,7 @@ def main():
                     for idx_e, (emp_excel, cadena_cods) in enumerate(mapa_extraido.items()):
                         cant_c = len([x for x in cadena_cods.split(";") if x.strip()])
                         alias_sug = emparejar_alias_empresa(emp_excel, empresas)
-                        opciones_ vinc = ["(Crear como nueva empresa)"] + aliases_db
+                        opciones_vinc = ["(Crear como nueva empresa)"] + aliases_db
                         idx_sel = opciones_vinc.index(alias_sug) if alias_sug in opciones_vinc else 0
                         sel_destino = st.selectbox(
                             f"🔗 '{emp_excel}' ({cant_c} códs) ➔",
@@ -736,7 +736,7 @@ def main():
                         except Exception as e:
                             st.error(f"Error al guardar: {e}")
 
-        # MÓDULO 2: REGISTRO / ACTUALIZACIÓN DE EMPRESAS (RUP + UNSPSC)
+        # MÓDULO 2: REGISTRO MANUAL DE EMPRESAS
         with st.expander("🏢 Registrar Nueva Empresa (RUP)"):
             with st.form("form_nueva_empresa", clear_on_submit=True):
                 alias = st.text_input("Alias (Ej. ZEKIA)")
