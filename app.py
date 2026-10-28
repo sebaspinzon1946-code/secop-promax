@@ -119,19 +119,19 @@ def formatear_miles_input(valor: Any) -> str:
     except Exception:
         return "$ 0"
 
-def limpiar_moneda_input(texto: Any) -> float:
+def limpiar_moneda_input(texto: Any) -> int:
     if isinstance(texto, (int, float)):
-        return float(texto)
+        return int(round(float(texto)))
     if not texto:
-        return 0.0
+        return 0
     s = str(texto).strip().replace("$", "").strip()
     if "," in s:
         s = s.split(",")[0]
     limpio = re.sub(r'[^\d]', '', s)
     try:
-        return float(limpio)
+        return int(limpio)
     except Exception:
-        return 0.0
+        return 0
 
 def limpiar_codigos_unspsc(texto_crudo: str) -> str:
     if not texto_crudo:
@@ -390,14 +390,21 @@ def main():
                         }
                         
                         def parse_num(val):
+                            """Convierte a int si el número es exacto (ej. 8.0 -> 8) o a float si tiene decimales."""
                             if pd.isna(val):
-                                return 0.0
+                                return 0
                             try:
                                 s = str(val).replace("$", "").replace(",", ".").strip()
                                 f = float(s)
-                                return 0.0 if (math.isnan(f) or math.isinf(f)) else f
+                                if math.isnan(f) or math.isinf(f):
+                                    return 0
+                                return int(f) if f.is_integer() else f
                             except Exception:
-                                return 0.0
+                                return 0
+
+                        def parse_int(val):
+                            """Garantiza estrictamente un entero puro (int) para columnas integer en Supabase."""
+                            return int(round(float(parse_num(val))))
                                 
                         def parse_str(val):
                             if pd.isna(val):
@@ -424,7 +431,7 @@ def main():
                                 continue
                                 
                             reg = {
-                                "numero_interno": int(parse_num(fila.iloc[0])),
+                                "numero_interno": parse_int(fila.iloc[0]),
                                 "fecha_registro": parse_date(fila.iloc[1]) or datetime.date.today().strftime("%Y-%m-%d"),
                                 "entidad": parse_str(fila.iloc[2]),
                                 "numero_proceso": num_proc,
@@ -442,7 +449,7 @@ def main():
                                 "fecha_obs_pliego_def": parse_date(fila.iloc[15]),
                                 "fecha_presentacion_oferta": parse_date(fila.iloc[16]),
                                 "codigos_unspsc_req": parse_str(fila.iloc[17]),
-                                "cant_codigos_unspsc_req": parse_num(fila.iloc[18]),
+                                "cant_codigos_unspsc_req": parse_int(fila.iloc[18]),
                                 "estampillas": parse_str(fila.iloc[19]),
                                 "req_liquidez_min": parse_num(fila.iloc[20]),
                                 "req_endeudamiento_max": parse_num(fila.iloc[21]),
@@ -594,7 +601,7 @@ def main():
                         met_eco_str = "\n".join(met_eco_sel) if met_eco_sel else "N/A"
                         
                         nueva_lic = {
-                            "numero_interno": num_interno,
+                            "numero_interno": int(num_interno),
                             "fecha_registro": datetime.date.today().strftime("%Y-%m-%d"),
                             "numero_proceso": num_proceso,
                             "entidad": entidad,
@@ -612,7 +619,7 @@ def main():
                             "fecha_obs_pliego_def": formatear_fecha_db(f_obsd),
                             "fecha_presentacion_oferta": formatear_fecha_db(f_ofe, hora_ofe),
                             "codigos_unspsc_req": unspsc_limpio if unspsc_limpio else "N/A",
-                            "cant_codigos_unspsc_req": cant_u,
+                            "cant_codigos_unspsc_req": int(cant_u),
                             "estampillas": estampillas,
                             "req_liquidez_min": r_liq,
                             "req_endeudamiento_max": r_end,
