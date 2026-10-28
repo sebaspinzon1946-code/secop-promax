@@ -119,8 +119,13 @@ def main():
                             presupuesto_str = datos.get('precio_base', datos.get('cuantia_proceso', datos.get('estimacion_del_presupuesto', 0)))
                             try: st.session_state['api_cuantia'] = float(presupuesto_str)
                             except ValueError: st.session_state['api_cuantia'] = 0.0
+                            
                             url_cruda = datos.get('urlproceso', '')
                             st.session_state['api_link'] = url_cruda.get('url', '') if isinstance(url_cruda, dict) else url_cruda
+                            
+                            # Intentar extraer el código UNSPSC principal desde la API de SECOP
+                            st.session_state['api_unspsc'] = datos.get('codigo_principal_de_categoria', datos.get('codigo_principal_de_categori', ''))
+                            
                             st.success("✅ Datos extraídos.")
                         else: st.warning("⚠️ No encontrado en API.")
                     except: st.error("Error de conexión.")
@@ -151,8 +156,9 @@ def main():
 
                 with t2:
                     st.write("**03 UNSPSC | 04 TRIBUTOS**")
-                    unspsc = st.text_input("Códigos Exigidos", value="N/A")
-                    cant_u = st.number_input("Cantidad Mínima", value=0)
+                    # Cambiado a un text_area para soportar cadenas largas como "86101600; 86101700; ..."
+                    unspsc = st.text_area("Códigos UNSPSC (Puedes pegar varios separados por ;)", value=st.session_state.get('api_unspsc', ''))
+                    cant_u = st.number_input("CANT. COD. REQ", value=0)
                     estampillas = st.text_area("Estampillas / Descuentos", value="N/A")
                     st.write("**05 FINANCIEROS (Pliego)**")
                     r_liq = st.number_input("Liquidez (>)", value=0.0, step=0.1)
@@ -217,7 +223,7 @@ def main():
                         }
                         try:
                             obtener_cliente_supabase().table("licitaciones_secop").insert(nueva_lic).execute()
-                            for k in ['api_entidad', 'api_objeto', 'api_cuantia', 'api_link']:
+                            for k in ['api_entidad', 'api_objeto', 'api_cuantia', 'api_link', 'api_unspsc']:
                                 if k in st.session_state: del st.session_state[k]
                             st.success("✅ ¡Proceso registrado!")
                             st.rerun()
