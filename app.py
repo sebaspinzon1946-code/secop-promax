@@ -1,5 +1,5 @@
 """
-Módulo Único Definitivo: Centro de Comando SECOP II (Buscador + Web Scraper, Evaluador UT + Cruce UNSPSC y Emisión PDF)
+Módulo Único Definitivo: Centro de Comando SECOP II (Buscador, Evaluador UT, Directorio de Empresas y Emisión PDF)
 """
 
 import os
@@ -133,7 +133,6 @@ def limpiar_moneda_input(texto: Any) -> int:
         return 0
 
 def limpiar_codigos_unspsc(texto_crudo: Any) -> str:
-    """Extrae todos los códigos UNSPSC de 8 dígitos (o 6 dígitos completando con 00) y los separa por '; '."""
     if texto_crudo is None:
         return ""
     s = str(texto_crudo).replace(".0", "")
@@ -636,92 +635,165 @@ def main():
                             st.error(f"Error al guardar empresa: {e}")
 
     # =====================================================================
-    # PANEL CENTRAL: EVALUACIÓN Y EMISIÓN PDF COMPLETA
+    # PANEL CENTRAL DIVIDIDO POR PESTAÑAS (EVALUADOR Y DIRECTORIO DE EMPRESAS)
     # =====================================================================
-    licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
-    if not licitaciones_validas: 
-        st.warning("⚠️ No hay licitaciones registradas. Agrega una desde el menú lateral izquierdo.")
-        return
+    tab_eval, tab_directorio = st.tabs(["⚖️ Evaluación de Procesos", "🏢 Directorio de Empresas (RUP)"])
 
-    st.header("1. Selección del Proceso SECOP II")
-    opciones_lic = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')}": lic for lic in licitaciones_validas}
-    lic_label = st.selectbox("Licitación a evaluar:", options=list(opciones_lic.keys()))
-    licitacion_actual = opciones_lic[lic_label]
+    # ------------------ PESTAÑA 1: EVALUADOR Y GENERADOR DE PDF ------------------
+    with tab_eval:
+        licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
+        if not licitaciones_validas: 
+            st.warning("⚠️ No hay licitaciones registradas. Agrega una desde el menú lateral izquierdo.")
+        else:
+            st.header("1. Selección del Proceso SECOP II")
+            opciones_lic = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')}": lic for lic in licitaciones_validas}
+            lic_label = st.selectbox("Licitación a evaluar:", options=list(opciones_lic.keys()))
+            licitacion_actual = opciones_lic[lic_label]
 
-    st.header("2. Configuración del Proponente")
-    tipo_figura = st.radio("Modalidad de Participación:", ["INDIVIDUAL", "UNION_TEMPORAL"], horizontal=True)
-    empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
-    mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
-    
-    if tipo_figura == "INDIVIDUAL":
-        alias_sel = st.selectbox("Empresa (RUP):", list(mapa_empresas.keys()))
-        empresas_elegidas = [alias_sel]
-    else:
-        empresas_elegidas = st.multiselect("Integrantes UT:", list(mapa_empresas.keys()), default=[list(mapa_empresas.keys())[0]] if mapa_empresas else [])
-        
-    nombre_proponente = st.text_input("Nombre Organización / UT:", value=f"UT {' + '.join(empresas_elegidas)}" if tipo_figura != "INDIVIDUAL" else (empresas_elegidas[0] if empresas_elegidas else ""))
+            st.header("2. Configuración del Proponente")
+            tipo_figura = st.radio("Modalidad de Participación:", ["INDIVIDUAL", "UNION_TEMPORAL"], horizontal=True)
+            empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
+            mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
+            
+            if tipo_figura == "INDIVIDUAL":
+                alias_sel = st.selectbox("Empresa (RUP):", list(mapa_empresas.keys()))
+                empresas_elegidas = [alias_sel]
+            else:
+                empresas_elegidas = st.multiselect("Integrantes UT:", list(mapa_empresas.keys()), default=[list(mapa_empresas.keys())[0]] if mapa_empresas else [])
+                
+            nombre_proponente = st.text_input("Nombre Organización / UT:", value=f"UT {' + '.join(empresas_elegidas)}" if tipo_figura != "INDIVIDUAL" else (empresas_elegidas[0] if empresas_elegidas else ""))
 
-    st.subheader(f"📋 {licitacion_actual.get('numero_proceso', '')} — {licitacion_actual.get('entidad', '')}")
-    st.write(f"**Objeto:** {licitacion_actual.get('objeto', '')}")
-    st.write(f"**Cuantía:** {formatear_moneda_cop(licitacion_actual.get('cuantia_presupuesto', 0))} | **Etapa:** {licitacion_actual.get('etapa_actual', 'N/A')} | **Plazo:** {licitacion_actual.get('tiempo_ejecucion', 'N/A')}")
+            st.subheader(f"📋 {licitacion_actual.get('numero_proceso', '')} — {licitacion_actual.get('entidad', '')}")
+            st.write(f"**Objeto:** {licitacion_actual.get('objeto', '')}")
+            st.write(f"**Cuantía:** {formatear_moneda_cop(licitacion_actual.get('cuantia_presupuesto', 0))} | **Etapa:** {licitacion_actual.get('etapa_actual', 'N/A')} | **Plazo:** {licitacion_actual.get('tiempo_ejecucion', 'N/A')}")
 
-    if not empresas_elegidas:
-        return
-    
-    integrantes_simulacion = []
-    cols_part = st.columns(len(empresas_elegidas))
-    for idx, alias in enumerate(empresas_elegidas):
-        emp_copy = dict(mapa_empresas[alias])
-        with cols_part[idx]:
-            pct = 100.0 if tipo_figura == "INDIVIDUAL" else st.number_input(f"% Participación {alias}:", min_value=1.0, max_value=99.0, value=round(100/len(empresas_elegidas), 2))
-        emp_copy["porcentaje_participacion"] = pct
-        integrantes_simulacion.append(emp_copy)
+            if empresas_elegidas:
+                integrantes_simulacion = []
+                cols_part = st.columns(len(empresas_elegidas))
+                for idx, alias in enumerate(empresas_elegidas):
+                    emp_copy = dict(mapa_empresas[alias])
+                    with cols_part[idx]:
+                        pct = 100.0 if tipo_figura == "INDIVIDUAL" else st.number_input(f"% Participación {alias}:", min_value=1.0, max_value=99.0, value=round(100/len(empresas_elegidas), 2))
+                    emp_copy["porcentaje_participacion"] = pct
+                    integrantes_simulacion.append(emp_copy)
 
-    resultado_sim = consolidar_proponente_plural(licitacion_actual, integrantes_simulacion, tipo_figura)
-    
-    # Visualización del Cruce de Códigos UNSPSC (Pliego vs. RUP)
-    cruce_u = resultado_sim["cruce_unspsc"]
-    st.subheader("🏷️ Cruce de Clasificación UNSPSC (Pliego vs. RUP)")
-    col_u1, col_u2, col_u3, col_u4 = st.columns(4)
-    col_u1.metric("Publicados en Proceso", cruce_u["total_publicados"])
-    col_u2.metric("Mínimo Exigido (Pliego)", cruce_u["min_exigido"])
-    col_u3.metric("Cumplidos en RUP", cruce_u["codigos_cumplidos"])
-    col_u4.metric("Estado UNSPSC", cruce_u["estado_unspsc"])
-    if cruce_u["coincidentes"]:
-        st.caption(f"**Códigos aportados por el RUP:** {'; '.join(cruce_u['coincidentes'])}")
+                resultado_sim = consolidar_proponente_plural(licitacion_actual, integrantes_simulacion, tipo_figura)
+                
+                # Visualización del Cruce de Códigos UNSPSC (Pliego vs. RUP)
+                cruce_u = resultado_sim["cruce_unspsc"]
+                st.subheader("🏷️ Cruce de Clasificación UNSPSC (Pliego vs. RUP)")
+                col_u1, col_u2, col_u3, col_u4 = st.columns(4)
+                col_u1.metric("Publicados en Proceso", cruce_u["total_publicados"])
+                col_u2.metric("Mínimo Exigido (Pliego)", cruce_u["min_exigido"])
+                col_u3.metric("Cumplidos en RUP", cruce_u["codigos_cumplidos"])
+                col_u4.metric("Estado UNSPSC", cruce_u["estado_unspsc"])
+                if cruce_u["coincidentes"]:
+                    st.caption(f"**Códigos aportados por el RUP:** {'; '.join(cruce_u['coincidentes'])}")
 
-    st.subheader("📊 Consolidado Financiero")
-    df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
-    st.dataframe(df_comp, use_container_width=True, hide_index=True)
-    st.info(f"DICTAMEN FINANCIERO GLOBAL: **{resultado_sim['estado_global']}**")
-    st.divider()
+                st.subheader("📊 Consolidado Financiero")
+                df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
+                st.dataframe(df_comp, use_container_width=True, hide_index=True)
+                st.info(f"DICTAMEN FINANCIERO GLOBAL: **{resultado_sim['estado_global']}**")
+                st.divider()
 
-    # =====================================================================
-    # 3. GENERACIÓN DIRECTA DE PDF COMPLETO
-    # =====================================================================
-    st.header("3. Emisión de Informe Ejecutivo en PDF")
-    lic_limpia_pdf = {k: ("N/A" if v is None else v) for k, v in licitacion_actual.items()}
-    
-    tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
-    dic_simulacion = {
-        "nombre_proponente": f"{nombre_proponente} ({tipo_etiqueta})",
-        "estado_global": resultado_sim['estado_global'],
-        "comparativo_indicadores": resultado_sim["comparativo_indicadores"],
-        "codigos_cumplidos": resultado_sim["codigos_cumplidos"],
-        "estado_unspsc": cruce_u["estado_unspsc"]
-    }
+                # Generación PDF
+                st.header("3. Emisión de Informe Ejecutivo en PDF")
+                lic_limpia_pdf = {k: ("N/A" if v is None else v) for k, v in licitacion_actual.items()}
+                
+                tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
+                dic_simulacion = {
+                    "nombre_proponente": f"{nombre_proponente} ({tipo_etiqueta})",
+                    "estado_global": resultado_sim['estado_global'],
+                    "comparativo_indicadores": resultado_sim["comparativo_indicadores"],
+                    "codigos_cumplidos": resultado_sim["codigos_cumplidos"],
+                    "estado_unspsc": cruce_u["estado_unspsc"]
+                }
 
-    try:
-        pdf_bytes = generar_informe_ejecutivo_pdf(licitacion=lic_limpia_pdf, simulacion=dic_simulacion, integrantes=integrantes_simulacion)
-        st.download_button(
-            label="⬇️ Descargar Informe Ejecutivo Corporativo (12 Secciones)",
-            data=pdf_bytes,
-            file_name=f"Informe_Completo_{licitacion_actual.get('numero_proceso', '0')}.pdf",
-            mime="application/pdf",
-            type="primary"
-        )
-    except Exception as e:
-        st.error(f"Error al compilar el documento: {e}")
+                try:
+                    pdf_bytes = generar_informe_ejecutivo_pdf(licitacion=lic_limpia_pdf, simulacion=dic_simulacion, integrantes=integrantes_simulacion)
+                    st.download_button(
+                        label="⬇️ Descargar Informe Ejecutivo Corporativo (12 Secciones)",
+                        data=pdf_bytes,
+                        file_name=f"Informe_Completo_{licitacion_actual.get('numero_proceso', '0')}.pdf",
+                        mime="application/pdf",
+                        type="primary"
+                    )
+                except Exception as e:
+                    st.error(f"Error al compilar el documento: {e}")
+
+    # ------------------ PESTAÑA 2: DIRECTORIO DE EMPRESAS ------------------
+    with tab_directorio:
+        st.header("🏢 Base Empresarial y Capacidad Financiera")
+        empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
+        if not empresas_validas:
+            st.warning("⚠️ No hay empresas registradas. Agrega una desde el menú lateral izquierdo.")
+        else:
+            # Tabla Resumen Gerencial
+            df_empresas = pd.DataFrame(empresas_validas)
+            cols_mostrar = {
+                "alias_codigo": "Alias",
+                "nit": "NIT",
+                "razon_social": "Razón Social",
+                "capital_trabajo": "Cap. Trabajo ($)",
+                "codigos_unspsc_rup": "Catálogo UNSPSC"
+            }
+            # Filtrar columnas que existan
+            cols_existentes = {k: v for k, v in cols_mostrar.items() if k in df_empresas.columns}
+            df_vista = df_empresas[list(cols_existentes.keys())].rename(columns=cols_existentes)
+            
+            # Formato a Moneda
+            if "Cap. Trabajo ($)" in df_vista.columns:
+                df_vista["Cap. Trabajo ($)"] = df_vista["Cap. Trabajo ($)"].apply(lambda x: formatear_moneda_cop(x))
+            
+            # Contar códigos para no saturar la tabla visual
+            if "Catálogo UNSPSC" in df_vista.columns:
+                df_vista["Cant. Códigos"] = df_vista["Catálogo UNSPSC"].apply(lambda x: len(str(x).split(";")) if x and str(x) != "N/A" else 0)
+                df_vista = df_vista.drop(columns=["Catálogo UNSPSC"])
+            
+            st.dataframe(df_vista, use_container_width=True, hide_index=True)
+            st.divider()
+            
+            # Ficha Técnica Individual
+            st.subheader("🔍 Ficha Técnica Detallada")
+            mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
+            alias_sel = st.selectbox("Selecciona una empresa para analizar sus indicadores y códigos:", list(mapa_empresas.keys()))
+            
+            if alias_sel:
+                e_data = mapa_empresas[alias_sel]
+                ac = float(e_data.get('activo_corriente', 0))
+                pc = float(e_data.get('pasivo_corriente', 0))
+                at = float(e_data.get('activo_total', 0))
+                pt = float(e_data.get('pasivo_total', 0))
+                pat = float(e_data.get('patrimonio', 0))
+                uo = float(e_data.get('utilidad_operacional', 0))
+                gi = float(e_data.get('gastos_intereses', 0))
+                ct = float(e_data.get('capital_trabajo', 0))
+                
+                liq = (ac / pc) if pc > 0 else 0
+                end = (pt / at) if at > 0 else 0
+                cob = (uo / gi) if gi > 0 else ("INDETERMINADO" if gi == 0 else 0)
+                rp = (uo / pat) if pat > 0 else 0
+                ra = (uo / at) if at > 0 else 0
+                
+                st.markdown(f"**Empresa:** {e_data.get('razon_social', alias_sel)} (NIT: {e_data.get('nit', 'N/A')})")
+                col_i1, col_i2, col_i3, col_i4, col_i5 = st.columns(5)
+                col_i1.metric("Liquidez (x)", f"{liq:,.2f}")
+                col_i2.metric("Endeudamiento", f"{end*100:,.2f}%")
+                col_i3.metric("Cobertura Int. (x)", cob if isinstance(cob, str) else f"{cob:,.2f}")
+                col_i4.metric("Rent. Patrimonio", f"{rp*100:,.2f}%")
+                col_i5.metric("Rent. Activo", f"{ra*100:,.2f}%")
+                
+                st.write(f"**Capital de Trabajo:** {formatear_moneda_cop(ct)}")
+                
+                st.write("**Catálogo de Códigos UNSPSC registrados en RUP:**")
+                cods_str = str(e_data.get("codigos_unspsc_rup", "No registra"))
+                if cods_str and cods_str != "N/A":
+                    # Mostrar de forma organizada si hay muchos códigos
+                    lista_cods = [c.strip() for c in cods_str.split(";")]
+                    st.caption(f"Total inscritos: {len(lista_cods)} códigos")
+                    st.info(" ; ".join(lista_cods))
+                else:
+                    st.info("Sin códigos registrados.")
 
 if __name__ == "__main__":
     main()
