@@ -105,7 +105,6 @@ def cargar_datos_base() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     return [], []
 
 def formatear_miles_input(valor: Any) -> str:
-    """Formatea cualquier número a cadena con separador de miles (Ej: $ 1.373.261.913)."""
     if isinstance(valor, (int, float)):
         return f"$ {int(round(valor)):,}".replace(",", ".")
     try:
@@ -120,7 +119,6 @@ def formatear_miles_input(valor: Any) -> str:
         return "$ 0"
 
 def limpiar_moneda_input(texto: Any) -> float:
-    """Convierte una cadena con formato de miles ($ 1.373.261.913) a float puro para Supabase."""
     if isinstance(texto, (int, float)):
         return float(texto)
     if not texto:
@@ -134,29 +132,26 @@ def limpiar_moneda_input(texto: Any) -> float:
     except Exception:
         return 0.0
 
-def limpiar_codigos_unspsc(texto_crudo: str) -> Tuple[str, int]:
+def limpiar_codigos_unspsc(texto_crudo: str) -> str:
     """Extrae automáticamente todos los códigos de 8 dígitos aunque se peguen con descripción."""
     if not texto_crudo:
-        return "", 0
+        return ""
     codigos_8_digitos = list(dict.fromkeys(re.findall(r'\b(\d{8})\b', str(texto_crudo))))
     if codigos_8_digitos:
-        return "; ".join(codigos_8_digitos), len(codigos_8_digitos)
+        return "; ".join(codigos_8_digitos)
     partes = [c.strip() for c in str(texto_crudo).replace(';', '\n').split('\n') if c.strip()]
-    return "; ".join(partes), len(partes)
+    return "; ".join(partes)
 
 def parsear_fecha_hora_secop(valor_str: Any) -> Tuple[Optional[datetime.date], Optional[datetime.time]]:
-    """Convierte fechas ISO de la API o DD/MM/YYYY de la web de SECOP en objetos date y time."""
     if not valor_str or str(valor_str).strip() in ["", "N/A", "None", "nan"]:
         return None, None
     s = str(valor_str).strip()
-    # 1. Formato ISO Socrata: 2026-10-30T10:00:00.000
     try:
         dt = datetime.datetime.fromisoformat(s.replace("Z", ""))
         hora = dt.time() if (dt.hour != 0 or dt.minute != 0) else None
         return dt.date(), hora
     except Exception:
         pass
-    # 2. Formato Web SECOP II: DD/MM/YYYY HH:MM o DD/MM/YYYY
     m = re.search(r'(\d{2})/(\d{2})/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?', s)
     if m:
         try:
@@ -202,7 +197,6 @@ def homologar_etapa(fase_api: str) -> str:
 # RASTREADOR MIXTO: API DATOS ABIERTOS + RASTREO WEB DIRECTO SECOP II
 # =====================================================================
 def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
-    """Rastrea la página pública de SECOP II para extraer Duración, Lista de UNSPSC y Cronograma."""
     extra = {}
     if not url_secop or not url_secop.startswith("http"):
         return extra
@@ -215,18 +209,14 @@ def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
         texto_plano = re.sub(r'<[^>]+>', ' ', html)
         texto_plano = re.sub(r'\s+', ' ', texto_plano)
 
-        # 1. Duración del contrato (Ej. "Duración del contrato: 7 (Meses)")
         m_dur = re.search(r'Duraci[óo]n del contrato[:\s]*(\d+)\s*\(?([A-Za-zÁÉÍÓÚáéíóú]+)\)?', texto_plano, re.IGNORECASE)
         if m_dur:
             extra['tiempo'] = f"{m_dur.group(1)} {m_dur.group(2).lower()}"
 
-        # 2. Todos los códigos UNSPSC publicados en la página (Principal + Lista adicional)
         codigos_web = list(dict.fromkeys(re.findall(r'\b(\d{8})\s*-\s*', texto_plano)))
         if codigos_web:
             extra['unspsc'] = "; ".join(codigos_web)
-            extra['cant_unspsc'] = len(codigos_web)
 
-        # 3. Fechas Hito del Cronograma en la página de SECOP II
         patrones_hitos = {
             'f_int': r'Manifestaci[óo]n de inter[ée]s.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s*m\.?)?)?)',
             'f_mip': r'Mipyme.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2})?)',
@@ -238,16 +228,13 @@ def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
             m_f = re.search(patron, texto_plano, re.IGNORECASE)
             if m_f:
                 f_dt, h_dt = parsear_fecha_hora_secop(m_f.group(1))
-                if f_dt:
-                    extra[clave] = f_dt
-                if clave == 'f_ofe' and h_dt:
-                    extra['h_ofe'] = h_dt
+                if f_dt: extra[clave] = f_dt
+                if clave == 'f_ofe' and h_dt: extra['h_ofe'] = h_dt
     except Exception:
         pass
     return extra
 
 def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> bool:
-    """Consulta la API de Datos Abiertos y complementa con el rastreo web de SECOP II."""
     encontrado = False
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     url_api = "https://www.datos.gov.co/resource/p6dx-8zbt.json"
@@ -260,7 +247,6 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
             if resp.status_code == 200 and len(resp.json()) > 0:
                 datos = resp.json()[0]
             else:
-                # Búsqueda flexible por si la entidad dejó espacios en el número de proceso
                 resp2 = requests.get(url_api, headers=headers, params={"$where": f"upper(referencia_del_proceso) like '%{exp_clean.upper()}%'"}, timeout=10)
                 if resp2.status_code == 200 and len(resp2.json()) > 0:
                     datos = resp2.json()[0]
@@ -273,35 +259,26 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
         st.session_state['api_objeto'] = datos.get('descripci_n_del_procedimiento', datos.get('detalle_del_objeto_a_contratar', datos.get('descripcion_del_proceso', '')))
         
         presupuesto_str = datos.get('precio_base', datos.get('cuantia_proceso', datos.get('estimacion_del_presupuesto', 0)))
-        try:
-            st.session_state['api_cuantia'] = formatear_miles_input(float(presupuesto_str))
-        except Exception:
-            st.session_state['api_cuantia'] = "$ 0"
+        try: st.session_state['api_cuantia'] = formatear_miles_input(float(presupuesto_str))
+        except Exception: st.session_state['api_cuantia'] = "$ 0"
 
         st.session_state['api_modalidad'] = homologar_modalidad(datos.get('modalidad_de_contratacion', ''))
         st.session_state['api_etapa'] = homologar_etapa(datos.get('fase', datos.get('estado_del_procedimiento', '')))
         st.session_state['api_lugar'] = datos.get('ciudad_entidad', datos.get('ciudad_de_la_unidad_de', 'Bogotá D.C.'))
 
-        # Tiempo de ejecución desde API (duracion + unidad_de_duracion)
         dur = str(datos.get('duracion', '')).strip()
         unid = str(datos.get('unidad_de_duracion', '')).strip()
         if dur and dur not in ['0', 'N/A', 'None']:
             st.session_state['api_tiempo'] = f"{dur} {unid.lower()}".strip()
 
-        # Enlace permanente
         url_cruda = datos.get('urlproceso', '')
         link_api = url_cruda.get('url', '') if isinstance(url_cruda, dict) else str(url_cruda)
-        if link_api:
-            st.session_state['api_link'] = link_api
+        if link_api: st.session_state['api_link'] = link_api
 
-        # Código UNSPSC desde API
         cod_api = datos.get('codigo_principal_de_categoria', datos.get('codigos_unspsc', ''))
-        cod_limpio, cant_cod = limpiar_codigos_unspsc(cod_api)
-        if cod_limpio:
-            st.session_state['api_unspsc'] = cod_limpio
-            st.session_state['api_cant_unspsc'] = cant_cod
+        cod_limpio = limpiar_codigos_unspsc(cod_api)
+        if cod_limpio: st.session_state['api_unspsc'] = cod_limpio
 
-        # Fechas disponibles en API
         f_rec, h_rec = parsear_fecha_hora_secop(datos.get('fecha_de_recepcion_de', datos.get('fecha_de_recepcion_de_ofertas')))
         if f_rec: st.session_state['api_f_ofe'] = f_rec
         if h_rec: st.session_state['api_h_ofe'] = h_rec
@@ -312,19 +289,15 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
         f_obsd, _ = parsear_fecha_hora_secop(datos.get('fecha_de_ultima_publicaci'))
         if f_obsd: st.session_state['api_f_obsd'] = f_obsd
 
-    # Rastreo directo de la página web de SECOP II (para capturar lista completa UNSPSC, duración y cronograma)
     url_objetivo = link_manual.strip() if link_manual.strip() else st.session_state.get('api_link', '')
     if url_objetivo:
         datos_web = rastrear_web_secop(url_objetivo)
         if datos_web:
             encontrado = True
             if 'tiempo' in datos_web: st.session_state['api_tiempo'] = datos_web['tiempo']
-            if 'unspsc' in datos_web:
-                st.session_state['api_unspsc'] = datos_web['unspsc']
-                st.session_state['api_cant_unspsc'] = datos_web['cant_unspsc']
+            if 'unspsc' in datos_web: st.session_state['api_unspsc'] = datos_web['unspsc']
             for k_f in ['f_int', 'f_mip', 'f_obsp', 'f_obsd', 'f_ofe', 'h_ofe']:
-                if k_f in datos_web:
-                    st.session_state[f'api_{k_f}'] = datos_web[k_f]
+                if k_f in datos_web: st.session_state[f'api_{k_f}'] = datos_web[k_f]
 
     return encontrado
 
@@ -347,7 +320,6 @@ def evaluar_indicador(nombre, regla, exigido, valor_consolidado, es_porcentaje=F
 
 def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_figura="UNION_TEMPORAL"):
     ac_cons = pc_cons = at_cons = pt_cons = pat_cons = uo_cons = gi_cons = ct_cons = 0.0
-
     for emp in integrantes_seleccionados:
         peso = float(emp.get("porcentaje_participacion", 0.0)) / 100.0 if tipo_figura != "INDIVIDUAL" else 1.0
         ac_cons += float(emp.get("activo_corriente", 0.0)) * peso
@@ -358,14 +330,12 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_fig
         uo_cons += float(emp.get("utilidad_operacional", 0.0)) * peso
         gi_cons += float(emp.get("gastos_intereses", 0.0)) * peso
         ct_cons += float(emp.get("capital_trabajo", 0.0))
-
     liq = (ac_cons / pc_cons) if pc_cons > 0 else None
     end = (pt_cons / at_cons) if at_cons > 0 else None
     cob_ind = (gi_cons == 0)
     cob = (uo_cons / gi_cons) if not cob_ind else None
     rp = (uo_cons / pat_cons) if pat_cons > 0 else None
     ra = (uo_cons / at_cons) if at_cons > 0 else None
-
     comparativo = [
         evaluar_indicador("Liquidez", ">=", licitacion.get("req_liquidez_min"), liq),
         evaluar_indicador("Endeudamiento", "<=", licitacion.get("req_endeudamiento_max"), end, es_porcentaje=True),
@@ -374,25 +344,19 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_fig
         evaluar_indicador("Rentabilidad patrimonio", ">=", licitacion.get("req_rentabilidad_patrimonio_min"), rp, es_porcentaje=True),
         evaluar_indicador("Rentabilidad del activo", ">=", licitacion.get("req_rentabilidad_activo_min"), ra, es_porcentaje=True),
     ]
-
     estados = [item["estado"] for item in comparativo if item["estado"] != "NO EXIGIDO"]
     estado_global = "NO CUMPLE" if "NO CUMPLE" in estados else "REVISAR" if "REVISAR" in estados else "CUMPLE"
     return {"tipo_figura": tipo_figura, "comparativo_indicadores": comparativo, "estado_global": estado_global}
 
 def selector_calendario(etiqueta: str, clave_memoria: str) -> Optional[datetime.date]:
-    """Renderiza un selector de fecha con calendario que permite quedar vacío (N/A) o elegir día."""
     val_def = st.session_state.get(clave_memoria, None)
-    try:
-        return st.date_input(etiqueta, value=val_def, format="DD/MM/YYYY")
-    except TypeError:
-        return st.date_input(etiqueta, value=val_def)
+    try: return st.date_input(etiqueta, value=val_def, format="DD/MM/YYYY")
+    except TypeError: return st.date_input(etiqueta, value=val_def)
 
 def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[datetime.time] = None) -> str:
-    if not fecha_obj:
-        return "N/A"
+    if not fecha_obj: return "N/A"
     f_str = fecha_obj.strftime("%Y-%m-%d")
-    if hora_obj:
-        return f"{f_str} ({hora_obj.strftime('%H:%M')})"
+    if hora_obj: return f"{f_str} ({hora_obj.strftime('%H:%M')})"
     return f_str
 
 # =====================================================================
@@ -401,14 +365,12 @@ def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[da
 def main():
     st.set_page_config(page_title="SECOP II ProMax", page_icon="⚖️", layout="wide")
     st.title("⚖️ Centro de Comando SECOP II — ASESOL / ZEKIA")
-
     empresas, licitaciones = cargar_datos_base()
     
     with st.sidebar:
-        # MÓDULO 1: BUSCADOR Y CREADOR COMPLETO
         with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=True):
             exp_buscar = st.text_input("Expediente (Ej. FDLSC-LP-006-2026)")
-            link_rastreo = st.text_input("Opcional: Link directo SECOP II (para rastrear UNSPSC y Duración)", value=st.session_state.get('api_link', ''))
+            link_rastreo = st.text_input("Opcional: Link directo SECOP II", value=st.session_state.get('api_link', ''))
             
             if st.button("🔍 Buscar API y Rastrear Web", use_container_width=True):
                 if exp_buscar or link_rastreo:
@@ -431,37 +393,29 @@ def main():
                     mod_def = st.session_state.get('api_modalidad', LISTA_MODALIDADES[0])
                     idx_mod = LISTA_MODALIDADES.index(mod_def) if mod_def in LISTA_MODALIDADES else 0
                     modalidad = st.selectbox("Modalidad", LISTA_MODALIDADES, index=idx_mod)
-                    
-                    # 1. Presupuesto reflejado en miles (Ej: $ 1.373.261.913)
                     cuantia_txt = st.text_input("Presupuesto Oficial (COP en miles)", value=st.session_state.get('api_cuantia', "$ 0"))
                     
-                    # 2. Etapa actual desplegable según Excel
                     etapa_def = st.session_state.get('api_etapa', "Ofertas")
                     idx_etapa = LISTA_ETAPAS.index(etapa_def) if etapa_def in LISTA_ETAPAS else 4
                     etapa = st.selectbox("Etapa Actual", LISTA_ETAPAS, index=idx_etapa)
-                    
                     estado = st.selectbox("Estado Revisión", LISTA_ESTADOS_REVISION, index=0)
                     lugar = st.text_input("Lugar Ejecución", value=st.session_state.get('api_lugar', "Bogotá D.C."))
-                    
-                    # 3. Tiempo de ejecución rastreado desde SECOP
                     tiempo = st.text_input("Tiempo Ejecución", value=st.session_state.get('api_tiempo', "N/A"))
                     
-                    # 4. Cronograma con Calendario interactivo y Hora de cierre
                     st.write("**02 CRONOGRAMA (Calendario)**")
-                    st.caption("Selecciona en el calendario (o deja vacío si no aplica):")
                     f_int = selector_calendario("📅 Manifestación Interés", "api_f_int")
                     f_sor = selector_calendario("📅 Fecha Sorteo", "api_f_sor")
                     f_mip = selector_calendario("📅 Límite Mipyme", "api_f_mip")
                     f_obsp = selector_calendario("📅 Obs. Proyecto Pliego", "api_f_obsp")
                     f_obsd = selector_calendario("📅 Obs. Pliego Definitivo", "api_f_obsd")
                     f_ofe = selector_calendario("📅 Fecha Presentación Ofertas", "api_f_ofe")
-                    hora_ofe = st.time_input("⏰ Hora de Cierre para Presentar Oferta", value=st.session_state.get('api_h_ofe', datetime.time(10, 0)))
+                    hora_ofe = st.time_input("⏰ Hora de Cierre Oferta", value=st.session_state.get('api_h_ofe', datetime.time(10, 0)))
 
                 with t2:
                     st.write("**03 UNSPSC | 04 TRIBUTOS**")
-                    st.caption("Puedes pegar el listado con nombres desde SECOP II; el sistema extraerá solo los números de 8 dígitos:")
                     unspsc_input = st.text_area("Códigos UNSPSC", value=st.session_state.get('api_unspsc', ''), height=110)
-                    cant_u = st.number_input("CANT. COD. REQ (0 = Conteo automático)", value=int(st.session_state.get('api_cant_unspsc', 0)), min_value=0)
+                    # Casilla manual para el número mínimo exigido por el pliego
+                    cant_u = st.number_input("CANT. COD. REQ (Mínimo exigido en pliegos)", value=0, min_value=0)
                     estampillas = st.text_area("Estampillas / Descuentos", value="N/A")
                     
                     st.write("**05 FINANCIEROS (Pliego)**")
@@ -482,7 +436,6 @@ def main():
                     ee_desc = st.text_area("Desc. Exp. Específica", value="N/A")
                     reg_emp = st.text_area("Emprendimientos / Mujeres / Mipyme", value="N/A")
                     
-                    # 5. Multiselección de Métodos de Oferta Económica según Excel
                     st.write("**08 EVALUACIÓN MÉTODOS**")
                     met_eco_sel = st.multiselect("Métodos de Oferta Económica (Excel)", options=LISTA_METODOS_ECONOMICOS)
                     fac_tec = st.text_area("Relación de Factores Técnicos Ponderables", value="N/A")
@@ -497,7 +450,6 @@ def main():
                     pt_mu = st.number_input("Mujeres", value=0.0, step=0.25)
                     pt_tot = st.number_input("Total Puntos", value=100.0, step=0.5)
                     
-                    # 5. Desplegable de Responsable según Excel
                     st.write("**10 RESPONSABLE | 11 LINK**")
                     responsable = st.selectbox("Responsable del Proceso", options=LISTA_RESPONSABLES, index=0)
                     obs_fin = st.text_area("Observaciones y Recomendaciones", value="N/A")
@@ -512,8 +464,7 @@ def main():
 
                 if st.form_submit_button("💾 Guardar Proceso Completo", type="primary"):
                     if num_proceso and entidad:
-                        unspsc_limpio, conteo_detectado = limpiar_codigos_unspsc(unspsc_input)
-                        cant_final_unspsc = cant_u if cant_u > 0 else conteo_detectado
+                        unspsc_limpio = limpiar_codigos_unspsc(unspsc_input)
                         met_eco_str = "\n".join(met_eco_sel) if met_eco_sel else "N/A"
                         
                         nueva_lic = {
@@ -535,7 +486,7 @@ def main():
                             "fecha_obs_pliego_def": formatear_fecha_db(f_obsd),
                             "fecha_presentacion_oferta": formatear_fecha_db(f_ofe, hora_ofe),
                             "codigos_unspsc_req": unspsc_limpio if unspsc_limpio else "N/A",
-                            "cant_codigos_unspsc_req": cant_final_unspsc,
+                            "cant_codigos_unspsc_req": cant_u,
                             "estampillas": estampillas,
                             "req_liquidez_min": r_liq,
                             "req_endeudamiento_max": r_end,
