@@ -133,7 +133,6 @@ def limpiar_moneda_input(texto: Any) -> float:
         return 0.0
 
 def limpiar_codigos_unspsc(texto_crudo: str) -> str:
-    """Extrae automáticamente todos los códigos de 8 dígitos aunque se peguen con descripción."""
     if not texto_crudo:
         return ""
     codigos_8_digitos = list(dict.fromkeys(re.findall(r'\b(\d{8})\b', str(texto_crudo))))
@@ -302,7 +301,7 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
     return encontrado
 
 # =====================================================================
-# 2. MOTOR MATEMÁTICO FINANCIERO
+# 2. MOTOR MATEMÁTICO FINANCIERO Y AYUDANTES DE FECHAS
 # =====================================================================
 def evaluar_indicador(nombre, regla, exigido, valor_consolidado, es_porcentaje=False, es_moneda=False, indeterminado=False):
     if exigido is None or exigido == "" or float(exigido) == 0:
@@ -353,10 +352,13 @@ def selector_calendario(etiqueta: str, clave_memoria: str) -> Optional[datetime.
     try: return st.date_input(etiqueta, value=val_def, format="DD/MM/YYYY")
     except TypeError: return st.date_input(etiqueta, value=val_def)
 
-def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[datetime.time] = None) -> str:
-    if not fecha_obj: return "N/A"
+def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[datetime.time] = None) -> Optional[str]:
+    """Convierte la fecha en un formato SQL válido. Devuelve None (NULL) si está vacía para evitar errores de sintaxis en DBs."""
+    if not fecha_obj: 
+        return None
     f_str = fecha_obj.strftime("%Y-%m-%d")
-    if hora_obj: return f"{f_str} ({hora_obj.strftime('%H:%M')})"
+    if hora_obj: 
+        return f"{f_str} {hora_obj.strftime('%H:%M:%S')}"
     return f_str
 
 # =====================================================================
@@ -414,7 +416,6 @@ def main():
                 with t2:
                     st.write("**03 UNSPSC | 04 TRIBUTOS**")
                     unspsc_input = st.text_area("Códigos UNSPSC", value=st.session_state.get('api_unspsc', ''), height=110)
-                    # Casilla manual para el número mínimo exigido por el pliego
                     cant_u = st.number_input("CANT. COD. REQ (Mínimo exigido en pliegos)", value=0, min_value=0)
                     estampillas = st.text_area("Estampillas / Descuentos", value="N/A")
                     
@@ -607,6 +608,10 @@ def main():
     # 3. GENERACIÓN DIRECTA DE PDF COMPLETO
     # =====================================================================
     st.header("3. Emisión de Informe Ejecutivo en PDF")
+    
+    # Preparamos los datos para que el PDF imprima "N/A" en lugar de "None"
+    lic_limpia_pdf = {k: ("N/A" if v is None else v) for k, v in licitacion_actual.items()}
+    
     tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
     dic_simulacion = {
         "nombre_proponente": f"{nombre_proponente} ({tipo_etiqueta})",
@@ -615,7 +620,7 @@ def main():
     }
 
     try:
-        pdf_bytes = generar_informe_ejecutivo_pdf(licitacion=licitacion_actual, simulacion=dic_simulacion, integrantes=[])
+        pdf_bytes = generar_informe_ejecutivo_pdf(licitacion=lic_limpia_pdf, simulacion=dic_simulacion, integrantes=[])
         st.download_button(
             label="⬇️ Descargar Informe Ejecutivo Corporativo (12 Secciones)",
             data=pdf_bytes,
