@@ -1,5 +1,5 @@
 """
-Módulo Único: Centro de Comando SECOP II (Con Migrador de UNSPSC RUP de Empresas y Emisión PDF)
+Módulo Único Definitivo: Centro de Comando SECOP II (Buscador + Web Scraper, Evaluador UT + Cruce UNSPSC y Emisión PDF)
 """
 
 import os
@@ -133,7 +133,7 @@ def limpiar_moneda_input(texto: Any) -> int:
         return 0
 
 def limpiar_codigos_unspsc(texto_crudo: Any) -> str:
-    """Extrae todos los códigos UNSPSC de 8 dígitos (o 6 dígitos de clase completando con 00) y los separa por '; '."""
+    """Extrae todos los códigos UNSPSC de 8 dígitos (o 6 dígitos completando con 00) y los separa por '; '."""
     if texto_crudo is None:
         return ""
     s = str(texto_crudo).replace(".0", "")
@@ -144,108 +144,6 @@ def limpiar_codigos_unspsc(texto_crudo: Any) -> str:
     if codigos_6:
         return "; ".join(codigos_6)
     return ""
-
-def extraer_unspsc_rup_excel(archivo_excel) -> Dict[str, str]:
-    """Lee la hoja 'UNSPSC RUP' del Excel (por filas, por columnas o formato tabla) y devuelve {Empresa: 'cod1; cod2...'}."""
-    xls = pd.ExcelFile(archivo_excel)
-    hoja_obj = None
-    for nombre_h in xls.sheet_names:
-        if "UNSPSC" in nombre_h.upper():
-            hoja_obj = nombre_h
-            break
-    if not hoja_obj:
-        for nombre_h in xls.sheet_names:
-            if "RUP" in nombre_h.upper() or "EMPRESA" in nombre_h.upper():
-                hoja_obj = nombre_h
-                break
-    if not hoja_obj:
-        return {}
-
-    df_raw = pd.read_excel(archivo_excel, sheet_name=hoja_obj, header=None)
-    palabras_ignorar = {
-        "CODIGO", "CÓDIGO", "CODIGOS", "CÓDIGOS", "UNSPSC", "DESCRIPCION", "DESCRIPCIÓN",
-        "CLASE", "PRODUCTO", "FAMILIA", "SEGMENTO", "EMPRESA", "EMPRESAS", "PROPONENTE",
-        "RUP", "N/A", "NAN", "NONE", "ITEM", "ÍTEM", "NO.", "N°", "TOTAL", "CANTIDAD"
-    }
-
-    def es_nombre_empresa(txt: str) -> bool:
-        t = str(txt).strip().upper()
-        if not t or len(t) < 3 or t in palabras_ignorar:
-            return False
-        if re.fullmatch(r'[\d\W_]+', t):
-            return False
-        if any(p in t for p in ["CLASIFICADOR", "BIENES Y SERVICIOS", "MATRIZ", "INFORME", "CODIGOS UNSPSC"]):
-            return False
-        return True
-
-    resultado: Dict[str, List[str]] = {}
-
-    # 1. Revisar si cada fila tiene el nombre de la empresa y sus códigos en una celda (separados por ; o coma)
-    for _, row in df_raw.iterrows():
-        textos_fila = []
-        codigos_fila = []
-        for val in row.values:
-            if pd.isna(val):
-                continue
-            c_str = limpiar_codigos_unspsc(val)
-            if c_str:
-                codigos_fila.extend([x.strip() for x in c_str.split(";") if x.strip()])
-            elif es_nombre_empresa(str(val)):
-                textos_fila.append(str(val).strip())
-        if textos_fila and len(codigos_fila) >= 2:
-            emp_nom = textos_fila[0].upper()
-            resultado.setdefault(emp_nom, []).extend(codigos_fila)
-
-    if resultado:
-        return {k: "; ".join(list(dict.fromkeys(v))) for k, v in resultado.items() if v}
-
-    # 2. Revisar si cada columna corresponde a una empresa (encabezado arriba y códigos hacia abajo)
-    cols_con_codigos = []
-    for col_idx in df_raw.columns:
-        serie_col = df_raw[col_idx].dropna()
-        cods_col = []
-        posibles_headers = []
-        for val in serie_col.values:
-            c_str = limpiar_codigos_unspsc(val)
-            if c_str:
-                cods_col.extend([x.strip() for x in c_str.split(";") if x.strip()])
-            elif not cods_col and es_nombre_empresa(str(val)):
-                posibles_headers.append(str(val).strip().upper())
-        if len(cods_col) >= 1:
-            cols_con_codigos.append((col_idx, posibles_headers[-1] if posibles_headers else f"COL_{col_idx}", cods_col))
-
-    if len(cols_con_codigos) >= 2:
-        for _, header_emp, cods_col in cols_con_codigos:
-            resultado.setdefault(header_emp, []).extend(cods_col)
-        return {k: "; ".join(list(dict.fromkeys(v))) for k, v in resultado.items() if v}
-
-    # 3. Formato largo (Columna Empresa + Columna Código UNSPSC)
-    if len(cols_con_codigos) == 1:
-        col_cod = cols_con_codigos[0][0]
-        col_emp = max(0, col_cod - 1)
-        df_sub = df_raw[[col_emp, col_cod]].copy()
-        df_sub[col_emp] = df_sub[col_emp].ffill()
-        for _, r in df_sub.iterrows():
-            emp_val = str(r[col_emp]).strip().upper()
-            c_str = limpiar_codigos_unspsc(r[col_cod])
-            if es_nombre_empresa(emp_val) and c_str:
-                resultado.setdefault(emp_val, []).extend([x.strip() for x in c_str.split(";") if x.strip()])
-
-    return {k: "; ".join(list(dict.fromkeys(v))) for k, v in resultado.items() if v}
-
-def emparejar_alias_empresa(nombre_excel: str, empresas_db: List[Dict[str, Any]]) -> Optional[str]:
-    """Busca a qué alias_codigo de Supabase corresponde el nombre encontrado en el Excel."""
-    n_exc = re.sub(r'[^A-Z0-9]', '', nombre_excel.upper())
-    for emp in empresas_db:
-        alias = str(emp.get("alias_codigo", "")).strip()
-        razon = str(emp.get("razon_social", "")).strip()
-        a_norm = re.sub(r'[^A-Z0-9]', '', alias.upper())
-        r_norm = re.sub(r'[^A-Z0-9]', '', razon.upper())
-        if a_norm and (a_norm == n_exc or a_norm in n_exc or n_exc in a_norm):
-            return alias
-        if r_norm and (r_norm == n_exc or r_norm in n_exc or n_exc in r_norm):
-            return alias
-    return None
 
 def parsear_fecha_hora_secop(valor_str: Any) -> Tuple[Optional[datetime.date], Optional[datetime.time]]:
     if not valor_str or str(valor_str).strip() in ["", "N/A", "None", "nan"]:
@@ -473,12 +371,14 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_fig
         uo_cons += float(emp.get("utilidad_operacional", 0.0)) * peso
         gi_cons += float(emp.get("gastos_intereses", 0.0)) * peso
         ct_cons += float(emp.get("capital_trabajo", 0.0))
+    
     liq = (ac_cons / pc_cons) if pc_cons > 0 else None
     end = (pt_cons / at_cons) if at_cons > 0 else None
     cob_ind = (gi_cons == 0)
     cob = (uo_cons / gi_cons) if not cob_ind else None
     rp = (uo_cons / pat_cons) if pat_cons > 0 else None
     ra = (uo_cons / at_cons) if at_cons > 0 else None
+    
     comparativo = [
         evaluar_indicador("Liquidez", ">=", licitacion.get("req_liquidez_min"), liq),
         evaluar_indicador("Endeudamiento", "<=", licitacion.get("req_endeudamiento_max"), end, es_porcentaje=True),
@@ -513,7 +413,7 @@ def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[da
     return f_str
 
 # =====================================================================
-# 3. INTERFAZ ALL-IN-ONE DEFINITIVA
+# 3. INTERFAZ ALL-IN-ONE
 # =====================================================================
 def main():
     st.set_page_config(page_title="SECOP II ProMax", page_icon="⚖️", layout="wide")
@@ -521,61 +421,6 @@ def main():
     empresas, licitaciones = cargar_datos_base()
     
     with st.sidebar:
-        # =======================================================
-        # ⚠️ MÓDULO TEMPORAL: MIGRACIÓN UNSPSC RUP DE EMPRESAS
-        # =======================================================
-        with st.expander("📥 Migrar UNSPSC RUP de Empresas (Excel)", expanded=True):
-            st.info("Sube tu Excel para extraer los códigos de la hoja 'UNSPSC RUP' y asignarlos a tus empresas.")
-            archivo_rup = st.file_uploader("Seleccionar Excel", type=["xlsx", "xls"], key="up_rup")
-            if archivo_rup:
-                mapa_extraido = extraer_unspsc_rup_excel(archivo_rup)
-                if not mapa_extraido:
-                    st.warning("No se detectaron códigos en la hoja UNSPSC RUP.")
-                else:
-                    st.caption(f"Se detectaron **{len(mapa_extraido)}** empresas con códigos en el Excel:")
-                    aliases_db = [str(e.get("alias_codigo", "")) for e in empresas if isinstance(e, dict)]
-                    asignaciones = {}
-                    for idx_e, (emp_excel, cadena_cods) in enumerate(mapa_extraido.items()):
-                        cant_c = len([x for x in cadena_cods.split(";") if x.strip()])
-                        alias_sug = emparejar_alias_empresa(emp_excel, empresas)
-                        opciones_vinc = ["(Crear como nueva empresa)"] + aliases_db
-                        idx_sel = opciones_vinc.index(alias_sug) if alias_sug in opciones_vinc else 0
-                        sel_destino = st.selectbox(
-                            f"🔗 '{emp_excel}' ({cant_c} códs) ➔",
-                            options=opciones_vinc,
-                            index=idx_sel,
-                            key=f"map_emp_{idx_e}"
-                        )
-                        asignaciones[emp_excel] = (sel_destino, cadena_cods)
-
-                    if st.button("🚀 Guardar UNSPSC RUP en Supabase", type="primary", use_container_width=True):
-                        cliente = obtener_cliente_supabase()
-                        actualizadas = 0
-                        creadas = 0
-                        try:
-                            for emp_excel, (destino, cadena_cods) in asignaciones.items():
-                                if destino == "(Crear como nueva empresa)":
-                                    nuevo_alias = emp_excel[:25].strip().upper()
-                                    cliente.table("empresas_proponentes").insert({
-                                        "alias_codigo": nuevo_alias,
-                                        "razon_social": emp_excel.strip().upper(),
-                                        "nit": "PENDIENTE",
-                                        "codigos_unspsc_rup": cadena_cods
-                                    }).execute()
-                                    creadas += 1
-                                else:
-                                    cliente.table("empresas_proponentes").update({
-                                        "codigos_unspsc_rup": cadena_cods
-                                    }).eq("alias_codigo", destino).execute()
-                                    actualizadas += 1
-                            st.success(f"✅ ¡Listo! Empresas actualizadas: {actualizadas} | Nuevas: {creadas}")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al actualizar UNSPSC RUP: {e}")
-        # =======================================================
-        # FIN DEL MÓDULO TEMPORAL
-        # =======================================================
-
         # MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS
         with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=False):
             exp_buscar = st.text_input("Expediente (Ej. FDLSC-LP-006-2026)")
@@ -736,7 +581,7 @@ def main():
                         except Exception as e:
                             st.error(f"Error al guardar: {e}")
 
-        # MÓDULO 2: REGISTRO MANUAL DE EMPRESAS
+        # MÓDULO 2: REGISTRO / ACTUALIZACIÓN DE EMPRESAS (RUP + UNSPSC)
         with st.expander("🏢 Registrar Nueva Empresa (RUP)"):
             with st.form("form_nueva_empresa", clear_on_submit=True):
                 alias = st.text_input("Alias (Ej. ZEKIA)")
