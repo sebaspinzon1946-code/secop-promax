@@ -1,8 +1,7 @@
 streamlit
 pandas
+requests
 supabase
-openpyxl
 python-dotenv
 reportlab
-requests
-reportlab
+openpyxl
