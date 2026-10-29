@@ -407,7 +407,7 @@ def main():
 
     # Pantalla de Login si no está autenticado
     if not st.session_state['usuario_actual']:
-        st.title("🔒 Acceso Seguro - ZEKIA / ASESOL")
+        st.title("🔒 Acceso")
         with st.form("login_form"):
             st.write("Ingresa tus credenciales para acceder al Centro de Comando.")
             user_input = st.text_input("Usuario")
@@ -423,7 +423,7 @@ def main():
         return # Detiene la ejecución del resto de la app hasta que inicie sesión
 
     # ------------------ APP PRINCIPAL ------------------
-    st.title("⚖️ Centro de Comando SECOP II — ASESOL / ZEKIA")
+    st.title("⚖️ Contratación Pública - SECOP II")
     
     empresas, licitaciones = cargar_datos_base()
     licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
