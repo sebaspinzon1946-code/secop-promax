@@ -1,5 +1,5 @@
 """
-Módulo Único Definitivo: Centro de Comando SECOP II (Buscador, Evaluador UT, Directorio de Empresas y Emisión PDF)
+Módulo Único Definitivo: Centro de Comando SECOP II (Buscador, Radar de Alertas, Evaluador UT y PDF)
 """
 
 import os
@@ -16,7 +16,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from generador_pdf import generar_informe_ejecutivo_pdf, formatear_moneda_cop, formatear_indicador
 
 # =====================================================================
-# LISTAS OFICIALES EXTRAÍDAS DEL EXCEL MAESTRO (HOJA 'LISTAS')
+# LISTAS OFICIALES EXTRAÍDAS DEL EXCEL MAESTRO
 # =====================================================================
 LISTA_MODALIDADES = [
     "Licitacion Pública",
@@ -196,7 +196,7 @@ def homologar_etapa(fase_api: str) -> str:
     return "Borrador"
 
 # =====================================================================
-# RASTREADOR MIXTO: API DATOS ABIERTOS + RASTREO WEB DIRECTO SECOP II
+# RASTREADOR MIXTO: API DATOS ABIERTOS + RASTREO WEB DIRECTO
 # =====================================================================
 def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
     extra = {}
@@ -212,12 +212,10 @@ def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
         texto_plano = re.sub(r'\s+', ' ', texto_plano)
 
         m_dur = re.search(r'Duraci[óo]n del contrato[:\s]*(\d+)\s*\(?([A-Za-zÁÉÍÓÚáéíóú]+)\)?', texto_plano, re.IGNORECASE)
-        if m_dur:
-            extra['tiempo'] = f"{m_dur.group(1)} {m_dur.group(2).lower()}"
+        if m_dur: extra['tiempo'] = f"{m_dur.group(1)} {m_dur.group(2).lower()}"
 
         codigos_web = list(dict.fromkeys(re.findall(r'\b(\d{8})\s*-\s*', texto_plano)))
-        if codigos_web:
-            extra['unspsc'] = "; ".join(codigos_web)
+        if codigos_web: extra['unspsc'] = "; ".join(codigos_web)
 
         patrones_hitos = {
             'f_int': r'Manifestaci[óo]n de inter[ée]s.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s*m\.?)?)?)',
@@ -270,8 +268,7 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
 
         dur = str(datos.get('duracion', '')).strip()
         unid = str(datos.get('unidad_de_duracion', '')).strip()
-        if dur and dur not in ['0', 'N/A', 'None']:
-            st.session_state['api_tiempo'] = f"{dur} {unid.lower()}".strip()
+        if dur and dur not in ['0', 'N/A', 'None']: st.session_state['api_tiempo'] = f"{dur} {unid.lower()}".strip()
 
         url_cruda = datos.get('urlproceso', '')
         link_api = url_cruda.get('url', '') if isinstance(url_cruda, dict) else str(url_cruda)
@@ -304,7 +301,7 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
     return encontrado
 
 # =====================================================================
-# 2. MOTOR MATEMÁTICO FINANCIERO Y CRUCE DE CÓDIGOS UNSPSC (RUP)
+# 2. MOTOR MATEMÁTICO Y CRUCE DE CÓDIGOS
 # =====================================================================
 def evaluar_indicador(nombre, regla, exigido, valor_consolidado, es_porcentaje=False, es_moneda=False, indeterminado=False):
     if exigido is None or exigido == "" or float(exigido) == 0:
@@ -336,27 +333,15 @@ def evaluar_cruce_unspsc(licitacion: Dict[str, Any], integrantes_seleccionados: 
     coincidentes = []
     faltantes = []
     for c_req in lista_req:
-        if c_req in set_rup_exacto or (c_req[:6] + "00") in set_rup_clase:
-            coincidentes.append(c_req)
-        else:
-            faltantes.append(c_req)
+        if c_req in set_rup_exacto or (c_req[:6] + "00") in set_rup_clase: coincidentes.append(c_req)
+        else: faltantes.append(c_req)
 
     cant_cumplidos = len(coincidentes)
-    if not lista_req and min_exigido == 0:
-        estado_unspsc = "NO EXIGIDO"
-    elif min_exigido > 0:
-        estado_unspsc = "CUMPLE" if cant_cumplidos >= min_exigido else "NO CUMPLE"
-    else:
-        estado_unspsc = "CUMPLE" if (cant_cumplidos == len(lista_req) and len(lista_req) > 0) else "REVISAR"
+    if not lista_req and min_exigido == 0: estado_unspsc = "NO EXIGIDO"
+    elif min_exigido > 0: estado_unspsc = "CUMPLE" if cant_cumplidos >= min_exigido else "NO CUMPLE"
+    else: estado_unspsc = "CUMPLE" if (cant_cumplidos == len(lista_req) and len(lista_req) > 0) else "REVISAR"
 
-    return {
-        "total_publicados": len(lista_req),
-        "min_exigido": min_exigido,
-        "codigos_cumplidos": cant_cumplidos,
-        "coincidentes": coincidentes,
-        "faltantes": faltantes,
-        "estado_unspsc": estado_unspsc
-    }
+    return {"total_publicados": len(lista_req), "min_exigido": min_exigido, "codigos_cumplidos": cant_cumplidos, "coincidentes": coincidentes, "faltantes": faltantes, "estado_unspsc": estado_unspsc}
 
 def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_figura="UNION_TEMPORAL"):
     ac_cons = pc_cons = at_cons = pt_cons = pat_cons = uo_cons = gi_cons = ct_cons = 0.0
@@ -390,13 +375,7 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_fig
     estado_global = "NO CUMPLE" if "NO CUMPLE" in estados else "REVISAR" if "REVISAR" in estados else "CUMPLE"
     
     cruce_unspsc = evaluar_cruce_unspsc(licitacion, integrantes_seleccionados)
-    return {
-        "tipo_figura": tipo_figura,
-        "comparativo_indicadores": comparativo,
-        "estado_global": estado_global,
-        "cruce_unspsc": cruce_unspsc,
-        "codigos_cumplidos": cruce_unspsc["codigos_cumplidos"]
-    }
+    return {"tipo_figura": tipo_figura, "comparativo_indicadores": comparativo, "estado_global": estado_global, "cruce_unspsc": cruce_unspsc, "codigos_cumplidos": cruce_unspsc["codigos_cumplidos"]}
 
 def selector_calendario(etiqueta: str, clave_memoria: str) -> Optional[datetime.date]:
     val_def = st.session_state.get(clave_memoria, None)
@@ -404,23 +383,62 @@ def selector_calendario(etiqueta: str, clave_memoria: str) -> Optional[datetime.
     except TypeError: return st.date_input(etiqueta, value=val_def)
 
 def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[datetime.time] = None) -> Optional[str]:
-    if not fecha_obj: 
-        return None
+    if not fecha_obj: return None
     f_str = fecha_obj.strftime("%Y-%m-%d")
-    if hora_obj: 
-        return f"{f_str} {hora_obj.strftime('%H:%M:%S')}"
+    if hora_obj: return f"{f_str} {hora_obj.strftime('%H:%M:%S')}"
     return f_str
 
 # =====================================================================
 # 3. INTERFAZ ALL-IN-ONE
 # =====================================================================
 def main():
-    st.set_page_config(page_title="SECOP II ProMax", page_icon="⚖️", layout="wide")
+    st.set_page_config(page_title="Zekia Bidding", page_icon="⚖️", layout="wide")
     st.title("⚖️ Procesos de Selección - SECOP II")
     empresas, licitaciones = cargar_datos_base()
     
+    # ------------------ RADAR DE ALERTAS INTELIGENTES ------------------
+    licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
+    alertas_criticas = []
+    alertas_medias = []
+    hoy = datetime.date.today()
+
+    for lic in licitaciones_validas:
+        estado_rev = str(lic.get("estado_revision", ""))
+        num_proc = str(lic.get("numero_proceso", "S/N"))
+        
+        # 1. Alertas de Vencimiento (Ofertas)
+        f_oferta_raw = lic.get("fecha_presentacion_oferta")
+        if f_oferta_raw and f_oferta_raw != "N/A":
+            f_solo = str(f_oferta_raw).split(" ")[0]
+            try:
+                f_oferta_dt = datetime.datetime.strptime(f_solo, "%Y-%m-%d").date()
+                dias_restantes = (f_oferta_dt - hoy).days
+                if estado_rev not in ["Presentada", "Inviable", "Seleccionada", "Desierto"]:
+                    if 0 <= dias_restantes <= 3:
+                        alertas_criticas.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo}).")
+                    elif 4 <= dias_restantes <= 7:
+                        alertas_medias.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo}).")
+            except Exception: pass
+            
+        # 2. Alertas de Pólizas
+        est_pol = str(lic.get("estado_poliza", ""))
+        if est_pol in ["Pendiente", "Solicitada"] and estado_rev in ["Alistamiento", "Viable", "Presentacion"]:
+            alertas_medias.append(f"**{num_proc}**: Atención, Póliza en estado '{est_pol}'.")
+
+    # Mostrar el radar solo en la pestaña principal, usando expander
+    with st.expander("🔔 Radar de Vencimientos y Alertas", expanded=bool(alertas_criticas or alertas_medias)):
+        if not alertas_criticas and not alertas_medias:
+            st.success("✅ Todo bajo control. No hay cierres críticos en los próximos 7 días ni pólizas pendientes urgentes.")
+        else:
+            if alertas_criticas:
+                for alerta in alertas_criticas:
+                    st.error(f"🚨 {alerta}")
+            if alertas_medias:
+                for alerta in alertas_medias:
+                    st.warning(f"⚠️ {alerta}")
+    # -------------------------------------------------------------------
+
     with st.sidebar:
-        # MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS
         with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=False):
             exp_buscar = st.text_input("Expediente (Ej. FDLSC-LP-006-2026)")
             link_rastreo = st.text_input("Opcional: Link directo SECOP II", value=st.session_state.get('api_link', ''))
@@ -573,14 +591,12 @@ def main():
                         try:
                             obtener_cliente_supabase().table("licitaciones_secop").insert(nueva_lic).execute()
                             for k in list(st.session_state.keys()):
-                                if k.startswith('api_'):
-                                    del st.session_state[k]
+                                if k.startswith('api_'): del st.session_state[k]
                             st.success("✅ ¡Proceso registrado con éxito!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al guardar: {e}")
 
-        # MÓDULO 2: REGISTRO / ACTUALIZACIÓN DE EMPRESAS (RUP + UNSPSC)
         with st.expander("🏢 Registrar Nueva Empresa (RUP)"):
             with st.form("form_nueva_empresa", clear_on_submit=True):
                 alias = st.text_input("Alias (Ej. ZEKIA)")
@@ -620,10 +636,7 @@ def main():
                         }
                         try:
                             cliente = obtener_cliente_supabase()
-                            aliases_existentes = {
-                                str(e.get("alias_codigo", "")).strip().upper()
-                                for e in empresas if isinstance(e, dict)
-                            }
+                            aliases_existentes = {str(e.get("alias_codigo", "")).strip().upper() for e in empresas if isinstance(e, dict)}
                             if alias.strip().upper() in aliases_existentes:
                                 cliente.table("empresas_proponentes").update(datos_emp).eq("alias_codigo", alias.strip().upper()).execute()
                                 st.success(f"✅ Empresa {alias.upper()} actualizada.")
@@ -635,13 +648,12 @@ def main():
                             st.error(f"Error al guardar empresa: {e}")
 
     # =====================================================================
-    # PANEL CENTRAL DIVIDIDO POR PESTAÑAS (EVALUADOR Y DIRECTORIO DE EMPRESAS)
+    # PANEL CENTRAL DIVIDIDO POR PESTAÑAS (EVALUADOR Y DIRECTORIO)
     # =====================================================================
     tab_eval, tab_directorio = st.tabs(["⚖️ Evaluación de Procesos", "🏢 Directorio de Empresas (RUP)"])
 
     # ------------------ PESTAÑA 1: EVALUADOR Y GENERADOR DE PDF ------------------
     with tab_eval:
-        licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
         if not licitaciones_validas: 
             st.warning("⚠️ No hay licitaciones registradas. Agrega una desde el menú lateral izquierdo.")
         else:
@@ -679,7 +691,6 @@ def main():
 
                 resultado_sim = consolidar_proponente_plural(licitacion_actual, integrantes_simulacion, tipo_figura)
                 
-                # Visualización del Cruce de Códigos UNSPSC (Pliego vs. RUP)
                 cruce_u = resultado_sim["cruce_unspsc"]
                 st.subheader("🏷️ Cruce de Clasificación UNSPSC (Pliego vs. RUP)")
                 col_u1, col_u2, col_u3, col_u4 = st.columns(4)
@@ -696,7 +707,6 @@ def main():
                 st.info(f"DICTAMEN FINANCIERO GLOBAL: **{resultado_sim['estado_global']}**")
                 st.divider()
 
-                # Generación PDF
                 st.header("3. Emisión de Informe Ejecutivo en PDF")
                 lic_limpia_pdf = {k: ("N/A" if v is None else v) for k, v in licitacion_actual.items()}
                 
@@ -728,24 +738,12 @@ def main():
         if not empresas_validas:
             st.warning("⚠️ No hay empresas registradas. Agrega una desde el menú lateral izquierdo.")
         else:
-            # Tabla Resumen Gerencial
             df_empresas = pd.DataFrame(empresas_validas)
-            cols_mostrar = {
-                "alias_codigo": "Alias",
-                "nit": "NIT",
-                "razon_social": "Razón Social",
-                "capital_trabajo": "Cap. Trabajo ($)",
-                "codigos_unspsc_rup": "Catálogo UNSPSC"
-            }
-            # Filtrar columnas que existan
+            cols_mostrar = {"alias_codigo": "Alias", "nit": "NIT", "razon_social": "Razón Social", "capital_trabajo": "Cap. Trabajo ($)", "codigos_unspsc_rup": "Catálogo UNSPSC"}
             cols_existentes = {k: v for k, v in cols_mostrar.items() if k in df_empresas.columns}
             df_vista = df_empresas[list(cols_existentes.keys())].rename(columns=cols_existentes)
             
-            # Formato a Moneda
-            if "Cap. Trabajo ($)" in df_vista.columns:
-                df_vista["Cap. Trabajo ($)"] = df_vista["Cap. Trabajo ($)"].apply(lambda x: formatear_moneda_cop(x))
-            
-            # Contar códigos para no saturar la tabla visual
+            if "Cap. Trabajo ($)" in df_vista.columns: df_vista["Cap. Trabajo ($)"] = df_vista["Cap. Trabajo ($)"].apply(lambda x: formatear_moneda_cop(x))
             if "Catálogo UNSPSC" in df_vista.columns:
                 df_vista["Cant. Códigos"] = df_vista["Catálogo UNSPSC"].apply(lambda x: len(str(x).split(";")) if x and str(x) != "N/A" else 0)
                 df_vista = df_vista.drop(columns=["Catálogo UNSPSC"])
@@ -753,21 +751,14 @@ def main():
             st.dataframe(df_vista, use_container_width=True, hide_index=True)
             st.divider()
             
-            # Ficha Técnica Individual
             st.subheader("🔍 Ficha Técnica Detallada")
             mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
             alias_sel = st.selectbox("Selecciona una empresa para analizar sus indicadores y códigos:", list(mapa_empresas.keys()))
             
             if alias_sel:
                 e_data = mapa_empresas[alias_sel]
-                ac = float(e_data.get('activo_corriente', 0))
-                pc = float(e_data.get('pasivo_corriente', 0))
-                at = float(e_data.get('activo_total', 0))
-                pt = float(e_data.get('pasivo_total', 0))
-                pat = float(e_data.get('patrimonio', 0))
-                uo = float(e_data.get('utilidad_operacional', 0))
-                gi = float(e_data.get('gastos_intereses', 0))
-                ct = float(e_data.get('capital_trabajo', 0))
+                ac, pc, at, pt = float(e_data.get('activo_corriente', 0)), float(e_data.get('pasivo_corriente', 0)), float(e_data.get('activo_total', 0)), float(e_data.get('pasivo_total', 0))
+                pat, uo, gi, ct = float(e_data.get('patrimonio', 0)), float(e_data.get('utilidad_operacional', 0)), float(e_data.get('gastos_intereses', 0)), float(e_data.get('capital_trabajo', 0))
                 
                 liq = (ac / pc) if pc > 0 else 0
                 end = (pt / at) if at > 0 else 0
@@ -788,12 +779,10 @@ def main():
                 st.write("**Catálogo de Códigos UNSPSC registrados en RUP:**")
                 cods_str = str(e_data.get("codigos_unspsc_rup", "No registra"))
                 if cods_str and cods_str != "N/A":
-                    # Mostrar de forma organizada si hay muchos códigos
                     lista_cods = [c.strip() for c in cods_str.split(";")]
                     st.caption(f"Total inscritos: {len(lista_cods)} códigos")
                     st.info(" ; ".join(lista_cods))
-                else:
-                    st.info("Sin códigos registrados.")
+                else: st.info("Sin códigos registrados.")
 
 if __name__ == "__main__":
     main()
