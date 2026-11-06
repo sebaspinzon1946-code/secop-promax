@@ -1,7 +1,9 @@
 """
-Módulo Único Definitivo: Centro de Comando SECOP II (Login, RBAC, Buscador, Alertas, Adendas, Evaluador y PDF)
+Módulo Único Definitivo: Centro de Comando SECOP II — Fase 1 Completa
+(Login RBAC, Matriz Masiva de Empresas, Desglose UNSPSC, Simulador Tributario, Talento Humano, Adendas, Alertas y Dashboard)
 """
 
+import io
 import os
 import re
 import datetime
@@ -13,10 +15,15 @@ import streamlit as st
 import requests
 from typing import Dict, Any, List, Optional, Tuple
 
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
 from generador_pdf import generar_informe_ejecutivo_pdf, formatear_moneda_cop, formatear_indicador
 
 # =====================================================================
-# LISTAS OFICIALES EXTRAÍDAS DEL EXCEL MAESTRO
+# LISTAS OFICIALES Y CATÁLOGOS NORMATIVOS (FASE 1)
 # =====================================================================
 LISTA_MODALIDADES = [
     "Licitacion Pública",
@@ -78,6 +85,49 @@ LISTA_RESPONSABLES = [
 LISTA_POLIZA = ["Por definir", "Sí", "No"]
 LISTA_ESTADO_POLIZA = ["Pendiente", "Solicitada", "Expedida", "Aprobada", "Rechazada", "No aplica"]
 
+LISTA_INICIATIVAS = [
+    "No aplica",
+    "Sí - Asociado a Iniciativas Ciudadanas / Presupuestos Participativos",
+    "Por verificar en Anexo Técnico"
+]
+
+LISTA_REQ_ESPECIALES = [
+    "PULEP (Portal Único de Espectáculos Públicos)",
+    "RNT (Registro Nacional de Turismo)",
+    "Certificado Operador Logístico",
+    "SUGA / Permisos IDIGER",
+    "Certificado de Residencia / Arraigo Local",
+    "Certificado de Víctimas del Conflicto",
+    "Certificado de Persona Cuidadora",
+    "Certificado Población Afrodescendiente / Raizal",
+    "Medio de Comunicación Certificado por IDPAC",
+    "Certificado de Exclusividad Comercial",
+    "Certificado de Derechos de Autor",
+    "Certificado y/o Experiencia Docente",
+    "Certificado Inscripción Población LGBTI",
+    "Certificación como Institución Educativa",
+    "Acuerdo o Alianza con Empresa de Transporte Habilitada",
+    "Contrato de Arrendamiento, Comodato o Convenio de Sede"
+]
+
+# Catálogo de profesiones y obligatoriedad de Tarjeta Profesional en Colombia
+MAPA_PROFESIONES_TP = {
+    "Derecho / Abogado(a)": "SÍ EXIGE Tarjeta Profesional (CSJ) + Vigencia",
+    "Contaduría Pública": "SÍ EXIGE Tarjeta Profesional (JCC) + Antecedentes",
+    "Ingeniería (Civil, Industrial, Sistemas, Ambiental, etc.)": "SÍ EXIGE Matrícula Profesional (COPNIA) + Vigencia",
+    "Arquitectura y Profesiones Auxiliares": "SÍ EXIGE Matrícula Profesional (CPNAA) + Vigencia",
+    "Administración de Empresas / Negocios / Pública": "SÍ EXIGE Tarjeta Profesional (CPAE)",
+    "Economía": "SÍ EXIGE Matrícula Profesional (CONALPE)",
+    "Psicología": "SÍ EXIGE Tarjeta Profesional (COLPSIC)",
+    "Trabajo Social": "SÍ EXIGE Registro / Tarjeta Profesional (CONETS)",
+    "Áreas de la Salud (Medicina, Enfermería, Fisioterapia, Nutrición)": "SÍ EXIGE Tarjeta Profesional (RETHUS)",
+    "Sociología / Antropología / Ciencia Política": "NO EXIGE Tarjeta Profesional (Solo Diploma y Acta)",
+    "Comunicación Social / Periodismo": "NO EXIGE Tarjeta Profesional (Sentencia C-087/98)",
+    "Artes Plásticas, Escénicas, Música o Literatura": "NO EXIGE Tarjeta Profesional (Solo Diploma / Experiencia Artística)",
+    "Licenciaturas / Pedagogía / Educación": "NO EXIGE Tarjeta Profesional (Resol. Escalafón si aplica)",
+    "Técnico / Tecnólogo / Bachiller / Operario Logístico": "NO EXIGE Tarjeta Profesional (Salvo técnicos electricistas CONTE)"
+}
+
 # =====================================================================
 # 1. CONEXIÓN A SUPABASE Y UTILIDADES DE FORMATO
 # =====================================================================
@@ -114,6 +164,26 @@ def cargar_datos_base() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         except Exception as e:
             st.sidebar.error(f"Error de lectura: {e}")
     return [], []
+
+def guardar_licitacion_seguro(payload: Dict[str, Any], modo: str = "insert", num_interno: Optional[int] = None):
+    """Guarda en Supabase intentando usar las nuevas columnas; si aún no se han creado en SQL, hace fallback automático."""
+    cliente = obtener_cliente_supabase()
+    if not cliente:
+        raise Exception("No hay conexión con Supabase.")
+    try:
+        if modo == "insert":
+            cliente.table("licitaciones_secop").insert(payload).execute()
+        else:
+            cliente.table("licitaciones_secop").update(payload).eq("numero_interno", num_interno).execute()
+    except Exception:
+        # Fallback en caso de que el usuario aún no haya corrido el ALTER TABLE en Supabase
+        payload_compatible = dict(payload)
+        for col_nueva in ["forma_pago", "iniciativas_ciudadanas", "requerimientos_especiales", "talento_humano_req"]:
+            payload_compatible.pop(col_nueva, None)
+        if modo == "insert":
+            cliente.table("licitaciones_secop").insert(payload_compatible).execute()
+        else:
+            cliente.table("licitaciones_secop").update(payload_compatible).eq("numero_interno", num_interno).execute()
 
 def formatear_miles_input(valor: Any) -> str:
     if isinstance(valor, (int, float)): return f"$ {int(round(valor)):,}".replace(",", ".")
@@ -229,18 +299,18 @@ def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
         if codigos_web: extra['unspsc'] = "; ".join(codigos_web)
 
         patrones_hitos = {
-            'f_int': r'Manifestaci[óo]n de inter[ée]s.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s*m\.?)?)?)',
-            'f_mip': r'Mipyme.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2})?)',
-            'f_obsp': r'(?:Observaciones al proyecto|borrador).*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2})?)',
-            'f_obsd': r'(?:Observaciones al pliego|extempor[áa]neas).*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2})?)',
-            'f_ofe': r'(?:Presentaci[óo]n de ofertas|l[íi]mite para presentar ofertas).*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s*m\.?)?)?)'
+            'int': r'Manifestaci[óo]n de inter[ée]s.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s*m\.?)?)?)',
+            'mip': r'Mipyme.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2})?)',
+            'obsp': r'(?:Observaciones al proyecto|borrador).*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2})?)',
+            'obsd': r'(?:Observaciones al pliego|extempor[áa]neas).*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2})?)',
+            'ofe': r'(?:Presentaci[óo]n de ofertas|l[íi]mite para presentar ofertas).*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s*m\.?)?)?)'
         }
         for clave, patron in patrones_hitos.items():
             m_f = re.search(patron, texto_plano, re.IGNORECASE)
             if m_f:
                 f_dt, h_dt = parsear_fecha_hora_secop(m_f.group(1))
-                if f_dt: extra[clave] = f_dt
-                if clave == 'f_ofe' and h_dt: extra['h_ofe'] = h_dt
+                if f_dt: extra[f'f_{clave}'] = f_dt
+                if h_dt: extra[f'h_{clave}'] = h_dt
     except Exception: pass
     return extra
 
@@ -263,7 +333,12 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
     if datos:
         encontrado = True
         st.session_state['api_entidad'] = datos.get('entidad', '')
-        st.session_state['api_objeto'] = datos.get('descripci_n_del_procedimiento', datos.get('detalle_del_objeto_a_contratar', datos.get('descripcion_del_proceso', '')))
+        obj_str = datos.get('descripci_n_del_procedimiento', datos.get('detalle_del_objeto_a_contratar', datos.get('descripcion_del_proceso', '')))
+        st.session_state['api_objeto'] = obj_str
+        
+        # Autodetección de Iniciativas Ciudadanas / Presupuestos Participativos (Punto 24)
+        if any(pal in obj_str.lower() for pal in ["iniciativa ciudadana", "iniciativas ciudadanas", "presupuesto participativo", "presupuestos participativos"]):
+            st.session_state['api_iniciativa'] = LISTA_INICIATIVAS[1]
         
         presupuesto_str = datos.get('precio_base', datos.get('cuantia_proceso', datos.get('estimacion_del_presupuesto', 0)))
         try: st.session_state['api_cuantia'] = formatear_miles_input(float(presupuesto_str))
@@ -289,11 +364,13 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
         if f_rec: st.session_state['api_f_ofe'] = f_rec
         if h_rec: st.session_state['api_h_ofe'] = h_rec
 
-        f_obsp, _ = parsear_fecha_hora_secop(datos.get('fecha_de_publicacion_fase_borrador', datos.get('fecha_de_publicacion_del')))
+        f_obsp, h_obsp = parsear_fecha_hora_secop(datos.get('fecha_de_publicacion_fase_borrador', datos.get('fecha_de_publicacion_del')))
         if f_obsp: st.session_state['api_f_obsp'] = f_obsp
+        if h_obsp: st.session_state['api_h_obsp'] = h_obsp
 
-        f_obsd, _ = parsear_fecha_hora_secop(datos.get('fecha_de_ultima_publicaci'))
+        f_obsd, h_obsd = parsear_fecha_hora_secop(datos.get('fecha_de_ultima_publicaci'))
         if f_obsd: st.session_state['api_f_obsd'] = f_obsd
+        if h_obsd: st.session_state['api_h_obsd'] = h_obsd
 
     url_objetivo = link_manual.strip() if link_manual.strip() else st.session_state.get('api_link', '')
     if url_objetivo:
@@ -302,13 +379,13 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
             encontrado = True
             if 'tiempo' in datos_web: st.session_state['api_tiempo'] = datos_web['tiempo']
             if 'unspsc' in datos_web: st.session_state['api_unspsc'] = datos_web['unspsc']
-            for k_f in ['f_int', 'f_mip', 'f_obsp', 'f_obsd', 'f_ofe', 'h_ofe']:
+            for k_f in ['f_int', 'h_int', 'f_mip', 'h_mip', 'f_obsp', 'h_obsp', 'f_obsd', 'h_obsd', 'f_ofe', 'h_ofe']:
                 if k_f in datos_web: st.session_state[f'api_{k_f}'] = datos_web[k_f]
 
     return encontrado
 
 # =====================================================================
-# 2. MOTOR MATEMÁTICO FINANCIERO Y CRUCE DE CÓDIGOS UNSPSC (RUP)
+# 2. MOTOR MATEMÁTICO FINANCIERO, UNSPSC Y MATRIZ MASIVA (PUNTO 1 y 9)
 # =====================================================================
 def evaluar_indicador(nombre, regla, exigido, valor_consolidado, es_porcentaje=False, es_moneda=False, indeterminado=False):
     if exigido is None or exigido == "" or float(exigido) == 0:
@@ -348,7 +425,15 @@ def evaluar_cruce_unspsc(licitacion: Dict[str, Any], integrantes_seleccionados: 
     elif min_exigido > 0: estado_unspsc = "CUMPLE" if cant_cumplidos >= min_exigido else "NO CUMPLE"
     else: estado_unspsc = "CUMPLE" if (cant_cumplidos == len(lista_req) and len(lista_req) > 0) else "REVISAR"
 
-    return {"total_publicados": len(lista_req), "min_exigido": min_exigido, "codigos_cumplidos": cant_cumplidos, "coincidentes": coincidentes, "faltantes": faltantes, "estado_unspsc": estado_unspsc}
+    return {
+        "lista_solicitados": lista_req,
+        "total_publicados": len(lista_req),
+        "min_exigido": min_exigido,
+        "codigos_cumplidos": cant_cumplidos,
+        "coincidentes": coincidentes,
+        "faltantes": faltantes,
+        "estado_unspsc": estado_unspsc
+    }
 
 def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_figura="UNION_TEMPORAL"):
     ac_cons = pc_cons = at_cons = pt_cons = pat_cons = uo_cons = gi_cons = ct_cons = 0.0
@@ -384,9 +469,95 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, tipo_fig
     cruce_unspsc = evaluar_cruce_unspsc(licitacion, integrantes_seleccionados)
     return {"tipo_figura": tipo_figura, "comparativo_indicadores": comparativo, "estado_global": estado_global, "cruce_unspsc": cruce_unspsc, "codigos_cumplidos": cruce_unspsc["codigos_cumplidos"]}
 
-def selector_calendario_seguro(etiqueta: str, valor_defecto: Any, clave: str) -> Optional[datetime.date]:
-    try: return st.date_input(etiqueta, value=valor_defecto, format="DD/MM/YYYY", key=clave)
-    except TypeError: return st.date_input(etiqueta, value=valor_defecto, key=clave)
+def generar_matriz_todas_empresas(licitacion: Dict[str, Any], empresas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Evalúa todas las empresas registradas de un solo golpe contra un proceso (Punto 1 de Edward)."""
+    filas = []
+    for emp in empresas:
+        emp_copy = dict(emp)
+        emp_copy["porcentaje_participacion"] = 100.0
+        res = consolidar_proponente_plural(licitacion, [emp_copy], "INDIVIDUAL")
+        cruce = res["cruce_unspsc"]
+        
+        fallas = [item["indicador"] for item in res["comparativo_indicadores"] if item["estado"] == "NO CUMPLE"]
+        mapa_ind = {item["indicador"]: item["consolidado_fmt"] for item in res["comparativo_indicadores"]}
+        
+        viabilidad_total = "✅ VIABLE INDIVIDUAL" if (res["estado_global"] == "CUMPLE" and cruce["estado_unspsc"] in ["CUMPLE", "NO EXIGIDO"]) else ("🤝 CANDIDATA PARA UT" if res["estado_global"] != "NO CUMPLE" or cruce["codigos_cumplidos"] > 0 else "❌ NO CUMPLE")
+        
+        filas.append({
+            "Alias": emp.get("alias_codigo", "S/N"),
+            "Razón Social": emp.get("razon_social", "S/N"),
+            "Dictamen General": viabilidad_total,
+            "Financiero": res["estado_global"],
+            "UNSPSC": f"{cruce['estado_unspsc']} ({cruce['codigos_cumplidos']}/{cruce['total_publicados']})",
+            "Liquidez": mapa_ind.get("Liquidez", "N/A"),
+            "Endeudamiento": mapa_ind.get("Endeudamiento", "N/A"),
+            "Cap. Trabajo": mapa_ind.get("Capital de trabajo (COP)", "N/A"),
+            "Indicadores que Fallan": ", ".join(fallas) if fallas else "Ninguno ✅"
+        })
+    return filas
+
+def generar_pdf_tablero_empresas(licitacion: Dict[str, Any], filas_matriz: List[Dict[str, Any]]) -> bytes:
+    """Genera el PDF del Informe Ejecutivo General comparando todas las empresas para un proceso."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+    styles = getSampleStyleSheet()
+    
+    estilo_titulo = ParagraphStyle('TituloTablero', parent=styles['Heading1'], fontSize=14, textColor=colors.HexColor("#1B365D"), spaceAfter=6)
+    estilo_sub = ParagraphStyle('SubTablero', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor("#333333"), spaceAfter=10)
+    estilo_celda = ParagraphStyle('CeldaTablero', parent=styles['Normal'], fontSize=7.5, leading=9)
+    estilo_header = ParagraphStyle('HeaderTablero', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.white, fontName="Helvetica-Bold")
+
+    story = []
+    num_proc = licitacion.get("numero_proceso", "S/N")
+    entidad = licitacion.get("entidad", "S/N")
+    cuantia = formatear_moneda_cop(licitacion.get("cuantia_presupuesto", 0))
+    
+    story.append(Paragraph(f"TABLERO EJECUTIVO DE VIABILIDAD POR EMPRESA — PROCESO {num_proc}", estilo_titulo))
+    story.append(Paragraph(f"<b>Entidad:</b> {entidad} | <b>Presupuesto Oficial:</b> {cuantia} | <b>Mín. UNSPSC exigidos:</b> {licitacion.get('cant_codigos_unspsc_req', 0)}", estilo_sub))
+    story.append(Paragraph(f"<b>Objeto:</b> {str(licitacion.get('objeto', ''))[:320]}", estilo_sub))
+    story.append(Spacer(1, 6))
+
+    encabezados = ["Alias", "Razón Social", "Dictamen General", "Financiero", "UNSPSC", "Liquidez", "Endeud.", "Cap. Trabajo", "Indicadores que Fallan"]
+    data_tabla = [[Paragraph(h, estilo_header) for h in encabezados]]
+    
+    for f in filas_matriz:
+        data_tabla.append([
+            Paragraph(str(f["Alias"]), estilo_celda),
+            Paragraph(str(f["Razón Social"])[:45], estilo_celda),
+            Paragraph(str(f["Dictamen General"]), estilo_celda),
+            Paragraph(str(f["Financiero"]), estilo_celda),
+            Paragraph(str(f["UNSPSC"]), estilo_celda),
+            Paragraph(str(f["Liquidez"]), estilo_celda),
+            Paragraph(str(f["Endeudamiento"]), estilo_celda),
+            Paragraph(str(f["Cap. Trabajo"]), estilo_celda),
+            Paragraph(str(f["Indicadores que Fallan"]), estilo_celda),
+        ])
+
+    col_widths = [55, 130, 95, 58, 72, 48, 52, 85, 145]
+    t = Table(data_tabla, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1B365D")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t)
+    doc.build(story)
+    return buffer.getvalue()
+
+def selector_fecha_hora_seguro(etiqueta: str, val_fecha: Any, val_hora: Any, clave_base: str) -> Tuple[Optional[datetime.date], Optional[datetime.time]]:
+    """Crea un selector de Fecha y Hora lado a lado para todos los hitos del cronograma (Punto 7 de Edward)."""
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        try: f_sel = st.date_input(etiqueta, value=val_fecha, format="DD/MM/YYYY", key=f"f_{clave_base}")
+        except TypeError: f_sel = st.date_input(etiqueta, value=val_fecha, key=f"f_{clave_base}")
+    with c2:
+        h_def = val_hora if isinstance(val_hora, datetime.time) else datetime.time(17, 0)
+        h_sel = st.time_input("⏰ Hora", value=h_def, key=f"h_{clave_base}")
+    return f_sel, h_sel
 
 def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[datetime.time] = None) -> Optional[str]:
     if not fecha_obj: return None
@@ -395,19 +566,17 @@ def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[da
     return f_str
 
 # =====================================================================
-# 3. INTERFAZ ALL-IN-ONE CON LOGIN
+# 3. INTERFAZ PRINCIPAL ALL-IN-ONE
 # =====================================================================
 def main():
     st.set_page_config(page_title="Zekia Bidding", page_icon="⚖️", layout="wide")
     
-    # Manejo de Sesión
     if 'usuario_actual' not in st.session_state:
         st.session_state['usuario_actual'] = None
         st.session_state['rol_usuario'] = None
 
-    # Pantalla de Login si no está autenticado
     if not st.session_state['usuario_actual']:
-        st.title("🔒 Acceso")
+        st.title("🔒 Acceso Seguro - ZEKIA / ASESOL")
         with st.form("login_form"):
             st.write("Ingresa tus credenciales para acceder al Centro de Comando.")
             user_input = st.text_input("Usuario")
@@ -419,14 +588,14 @@ def main():
                     st.session_state['rol_usuario'] = user_data['rol']
                     st.rerun()
                 else:
-                    st.error("❌ Credenciales incorrectas o base de datos no configurada.")
-        return # Detiene la ejecución del resto de la app hasta que inicie sesión
+                    st.error("❌ Credenciales incorrectas o base de datos en pausa.")
+        return
 
-    # ------------------ APP PRINCIPAL ------------------
-    st.title("⚖️ Contratación Pública - SECOP II")
+    st.title("⚖️ Centro de Comando SECOP II — ASESOL / ZEKIA")
     
     empresas, licitaciones = cargar_datos_base()
     licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
+    empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
     es_admin = st.session_state['rol_usuario'] in ["Administrador", "Editor"]
     
     # ------------------ RADAR DE ALERTAS INTELIGENTES ------------------
@@ -440,26 +609,31 @@ def main():
         
         f_oferta_raw = lic.get("fecha_presentacion_oferta")
         if f_oferta_raw and f_oferta_raw != "N/A":
-            f_solo = str(f_oferta_raw).split(" ")[0]
+            partes_f = str(f_oferta_raw).split(" ")
+            f_solo = partes_f[0]
+            h_solo = partes_f[1][:5] if len(partes_f) > 1 else ""
             try:
                 f_oferta_dt = datetime.datetime.strptime(f_solo, "%Y-%m-%d").date()
                 dias_restantes = (f_oferta_dt - hoy).days
                 if estado_rev not in ["Presentada", "Inviable", "Seleccionada", "Desierto"]:
-                    if 0 <= dias_restantes <= 3: alertas_criticas.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo}).")
-                    elif 4 <= dias_restantes <= 7: alertas_medias.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo}).")
+                    if 0 <= dias_restantes <= 3: alertas_criticas.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo} {h_solo}).")
+                    elif 4 <= dias_restantes <= 7: alertas_medias.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo} {h_solo}).")
             except Exception: pass
             
         est_pol = str(lic.get("estado_poliza", ""))
         if est_pol in ["Pendiente", "Solicitada"] and estado_rev in ["Alistamiento", "Viable", "Presentacion"]:
             alertas_medias.append(f"**{num_proc}**: Atención, Póliza en estado '{est_pol}'.")
 
-    with st.expander("🔔 Radar de Vencimientos y Alertas", expanded=bool(alertas_criticas or alertas_medias)):
-        if not alertas_criticas and not alertas_medias: st.success("✅ Todo bajo control. No hay cierres críticos próximos.")
+    with st.expander("🔔 Radar de Vencimientos y Alertas (Próximos 7 días)", expanded=bool(alertas_criticas or alertas_medias)):
+        if not alertas_criticas and not alertas_medias:
+            st.success("✅ Todo bajo control. Los procesos vencidos o ya presentados se retiran automáticamente de este radar.")
         else:
             for alerta in alertas_criticas: st.error(f"🚨 {alerta}")
             for alerta in alertas_medias: st.warning(f"⚠️ {alerta}")
-    # -------------------------------------------------------------------
 
+    # =====================================================================
+    # BARRA LATERAL (REGISTRO, ADENDAS Y EMPRESAS)
+    # =====================================================================
     with st.sidebar:
         st.markdown(f"👤 **{st.session_state['usuario_actual']}** | Rol: *{st.session_state['rol_usuario']}*")
         if st.button("🚪 Cerrar Sesión", use_container_width=True):
@@ -483,7 +657,7 @@ def main():
                         else: st.warning("⚠️ No indexado aún en API. Puedes diligenciarlo manualmente.")
                 
                 with st.form("form_guardar_proceso", clear_on_submit=True):
-                    st.caption("Diligencia las 12 secciones (Matriz Excel)")
+                    st.caption("Diligencia las 12 secciones (Matriz + Mejoras Fase 1)")
                     t1, t2, t3, t4 = st.tabs(["01-02", "03-05", "06-08", "09-12"])
                     
                     with t1:
@@ -494,29 +668,30 @@ def main():
                         objeto = st.text_area("Objeto", value=st.session_state.get('api_objeto', ''), key="objeto_c")
                         
                         mod_def = st.session_state.get('api_modalidad', LISTA_MODALIDADES[0])
-                        idx_mod = get_index_safe(LISTA_MODALIDADES, mod_def)
-                        modalidad = st.selectbox("Modalidad", LISTA_MODALIDADES, index=idx_mod, key="modalidad_c")
+                        modalidad = st.selectbox("Modalidad", LISTA_MODALIDADES, index=get_index_safe(LISTA_MODALIDADES, mod_def), key="modalidad_c")
                         cuantia_txt = st.text_input("Presupuesto Oficial (COP)", value=st.session_state.get('api_cuantia', "$ 0"), key="cuantia_c")
+                        forma_pago = st.text_input("Forma de Pago (Punto 15)", value="Mensualidades vencidas / Pagos parciales según avance", key="fpago_c")
+                        
+                        ini_def = st.session_state.get('api_iniciativa', LISTA_INICIATIVAS[0])
+                        iniciativas = st.selectbox("¿Iniciativas Ciudadanas? (Punto 24)", LISTA_INICIATIVAS, index=get_index_safe(LISTA_INICIATIVAS, ini_def), key="inic_c")
                         
                         etapa_def = st.session_state.get('api_etapa', "Ofertas")
-                        idx_etapa = get_index_safe(LISTA_ETAPAS, etapa_def)
-                        etapa = st.selectbox("Etapa Actual", LISTA_ETAPAS, index=idx_etapa, key="etapa_c")
+                        etapa = st.selectbox("Etapa Actual", LISTA_ETAPAS, index=get_index_safe(LISTA_ETAPAS, etapa_def), key="etapa_c")
                         estado = st.selectbox("Estado Revisión", LISTA_ESTADOS_REVISION, index=0, key="estado_c")
                         lugar = st.text_input("Lugar Ejecución", value=st.session_state.get('api_lugar', "Bogotá D.C."), key="lugar_c")
                         tiempo = st.text_input("Tiempo Ejecución", value=st.session_state.get('api_tiempo', "N/A"), key="tiempo_c")
                         
-                        st.write("**02 CRONOGRAMA (Calendario)**")
-                        f_int = selector_calendario_seguro("📅 Manifestación Interés", st.session_state.get('api_f_int', None), "f_int_c")
-                        f_sor = selector_calendario_seguro("📅 Fecha Sorteo", st.session_state.get('api_f_sor', None), "f_sor_c")
-                        f_mip = selector_calendario_seguro("📅 Límite Mipyme", st.session_state.get('api_f_mip', None), "f_mip_c")
-                        f_obsp = selector_calendario_seguro("📅 Obs. Proyecto Pliego", st.session_state.get('api_f_obsp', None), "f_obsp_c")
-                        f_obsd = selector_calendario_seguro("📅 Obs. Pliego Definitivo", st.session_state.get('api_f_obsd', None), "f_obsd_c")
-                        f_ofe = selector_calendario_seguro("📅 Fecha Presentación Ofertas", st.session_state.get('api_f_ofe', None), "f_ofe_c")
-                        hora_ofe = st.time_input("⏰ Hora de Cierre Oferta", value=st.session_state.get('api_h_ofe', datetime.time(10, 0)), key="h_ofe_c")
+                        st.write("**02 CRONOGRAMA CON HORA (Punto 7)**")
+                        f_int, h_int = selector_fecha_hora_seguro("📅 Manifestación Interés", st.session_state.get('api_f_int', None), st.session_state.get('api_h_int', datetime.time(17, 0)), "int_c")
+                        f_sor, h_sor = selector_fecha_hora_seguro("📅 Fecha Sorteo", st.session_state.get('api_f_sor', None), datetime.time(10, 0), "sor_c")
+                        f_mip, h_mip = selector_fecha_hora_seguro("📅 Límite Mipyme", st.session_state.get('api_f_mip', None), st.session_state.get('api_h_mip', datetime.time(17, 0)), "mip_c")
+                        f_obsp, h_obsp = selector_fecha_hora_seguro("📅 Obs. Proyecto Pliego", st.session_state.get('api_f_obsp', None), st.session_state.get('api_h_obsp', datetime.time(17, 0)), "obsp_c")
+                        f_obsd, h_obsd = selector_fecha_hora_seguro("📅 Obs. Pliego Definitivo", st.session_state.get('api_f_obsd', None), st.session_state.get('api_h_obsd', datetime.time(17, 0)), "obsd_c")
+                        f_ofe, h_ofe = selector_fecha_hora_seguro("📅 Presentación Ofertas", st.session_state.get('api_f_ofe', None), st.session_state.get('api_h_ofe', datetime.time(10, 0)), "ofe_c")
 
                     with t2:
                         st.write("**03 UNSPSC | 04 TRIBUTOS**")
-                        unspsc_input = st.text_area("Códigos UNSPSC", value=st.session_state.get('api_unspsc', ''), height=110, key="unspsc_c")
+                        unspsc_input = st.text_area("Códigos UNSPSC", value=st.session_state.get('api_unspsc', ''), height=100, key="unspsc_c")
                         cant_u = st.number_input("CANT. COD. REQ (Mínimo exigido en pliegos)", value=0, min_value=0, key="cant_u_c")
                         estampillas = st.text_area("Estampillas / Descuentos", value="N/A", key="estampillas_c")
                         
@@ -529,10 +704,16 @@ def main():
                         r_ract = st.number_input("Rent. Activo (>=)", value=0.0, step=0.05, key="r_ract_c")
                     
                     with t3:
-                        st.write("**06 RESUMEN EJECUCIÓN**")
-                        resumen = st.text_area("Resumen y Requerimientos Generales", value="N/A", key="resumen_c")
+                        st.write("**06 RESUMEN, REQUERIMIENTOS ESPECIALES Y TALENTO HUMANO**")
+                        resumen = st.text_area("Resumen y Actividades Principales de Ejecución", value="N/A", key="resumen_c")
+                        req_esp_sel = st.multiselect("Certificados y Requerimientos Específicos (Punto 12)", options=LISTA_REQ_ESPECIALES, key="req_esp_c")
+                        
+                        st.write("**Talento Humano y Tarjeta Profesional (Puntos 13 y 14)**")
+                        carreras_sel = st.multiselect("Selecciona las profesiones exigidas para validar Tarjeta Profesional:", options=list(MAPA_PROFESIONES_TP.keys()), key="carreras_c")
+                        detalle_th = st.text_area("Detalle adicional de perfiles / cantidades de Talento Humano", value="N/A", key="th_det_c")
+                        
                         st.write("**07 EXPERIENCIA**")
-                        eg_cont = st.text_input("Exp. General Contratos", value="N/A", key="eg_cont_c")
+                        eg_cont = st.text_input("Exp. General Contratos (Ej. Máximo 2 contratos / Hasta 3 contratos)", value="N/A", key="eg_cont_c")
                         eg_desc = st.text_area("Desc. Exp. General", value="N/A", key="eg_desc_c")
                         ee_cont = st.text_input("Exp. Específica Contratos", value="N/A", key="ee_cont_c")
                         ee_desc = st.text_area("Desc. Exp. Específica", value="N/A", key="ee_desc_c")
@@ -560,12 +741,26 @@ def main():
                         st.write("**12 GARANTÍAS (Pólizas)**")
                         pol_tipo = st.selectbox("¿Exige Póliza?", options=LISTA_POLIZA, index=0, key="pol_tipo_c")
                         pol_ser = st.text_input("Póliza Seriedad Oferta (Ej. 10% del PO)", value="N/A", key="pol_ser_c")
-                        pol_fec_obj = selector_calendario_seguro("📅 Fecha Solicitud Póliza", st.session_state.get('api_f_pol', None), "pol_fec_c")
+                        pol_fec_obj, _ = selector_fecha_hora_seguro("📅 Fecha Solicitud Póliza", st.session_state.get('api_f_pol', None), datetime.time(9, 0), "pol_fec_c")
                         pol_vr_txt = st.text_input("Vr. Póliza ($ COP)", value="$ 0", key="pol_vr_c")
                         pol_est = st.selectbox("Estado de la Póliza", options=LISTA_ESTADO_POLIZA, index=0, key="pol_est_c")
 
                     if st.form_submit_button("💾 Guardar Proceso Completo", type="primary"):
                         if num_proceso and entidad:
+                            # Construcción automática del bloque de Talento Humano + Tarjeta Profesional
+                            lineas_tp = [f"• {c}: {MAPA_PROFESIONES_TP[c]}" for c in carreras_sel]
+                            bloque_th = ("\n".join(lineas_tp) + (f"\nDetalle adicional: {detalle_th}" if detalle_th != "N/A" else "")) if lineas_tp else detalle_th
+                            req_esp_str = "; ".join(req_esp_sel) if req_esp_sel else "Ninguno específico"
+                            
+                            resumen_enriquecido = (
+                                f"{resumen}\n\n"
+                                f"--- DATOS COMPLEMENTARIOS DE EJECUCIÓN ---\n"
+                                f"• Forma de Pago: {forma_pago}\n"
+                                f"• Iniciativas Ciudadanas: {iniciativas}\n"
+                                f"• Certificados / Requerimientos Especiales: {req_esp_str}\n"
+                                f"• Talento Humano y Tarjeta Profesional:\n{bloque_th}"
+                            )
+
                             nueva_lic = {
                                 "numero_interno": int(num_interno),
                                 "fecha_registro": datetime.date.today().strftime("%Y-%m-%d"),
@@ -578,12 +773,12 @@ def main():
                                 "estado_revision": estado,
                                 "lugar_ejecucion": lugar,
                                 "tiempo_ejecucion": tiempo,
-                                "fecha_manifestacion_interes": formatear_fecha_db(f_int),
-                                "fecha_sorteo": formatear_fecha_db(f_sor),
-                                "fecha_limitacion_mipyme": formatear_fecha_db(f_mip),
-                                "fecha_obs_prepliego": formatear_fecha_db(f_obsp),
-                                "fecha_obs_pliego_def": formatear_fecha_db(f_obsd),
-                                "fecha_presentacion_oferta": formatear_fecha_db(f_ofe, hora_ofe),
+                                "fecha_manifestacion_interes": formatear_fecha_db(f_int, h_int),
+                                "fecha_sorteo": formatear_fecha_db(f_sor, h_sor),
+                                "fecha_limitacion_mipyme": formatear_fecha_db(f_mip, h_mip),
+                                "fecha_obs_prepliego": formatear_fecha_db(f_obsp, h_obsp),
+                                "fecha_obs_pliego_def": formatear_fecha_db(f_obsd, h_obsd),
+                                "fecha_presentacion_oferta": formatear_fecha_db(f_ofe, h_ofe),
                                 "codigos_unspsc_req": limpiar_codigos_unspsc(unspsc_input) or "N/A",
                                 "cant_codigos_unspsc_req": int(cant_u),
                                 "estampillas": estampillas,
@@ -593,7 +788,11 @@ def main():
                                 "req_capital_trabajo_cop": limpiar_moneda_input(r_cap_txt),
                                 "req_rentabilidad_patrimonio_min": r_rpat,
                                 "req_rentabilidad_activo_min": r_ract,
-                                "resumen_requerimientos_generales": resumen,
+                                "resumen_requerimientos_generales": resumen_enriquecido,
+                                "forma_pago": forma_pago,
+                                "iniciativas_ciudadanas": iniciativas,
+                                "requerimientos_especiales": req_esp_str,
+                                "talento_humano_req": bloque_th,
                                 "exp_general_contratos": eg_cont,
                                 "exp_general_descripcion": eg_desc,
                                 "exp_especifica_contratos": ee_cont,
@@ -618,7 +817,7 @@ def main():
                                 "estado_poliza": pol_est
                             }
                             try:
-                                obtener_cliente_supabase().table("licitaciones_secop").insert(nueva_lic).execute()
+                                guardar_licitacion_seguro(nueva_lic, modo="insert")
                                 for k in list(st.session_state.keys()):
                                     if k.startswith('api_'): del st.session_state[k]
                                 st.success("✅ ¡Proceso registrado con éxito!")
@@ -634,50 +833,48 @@ def main():
                     st.warning("No hay procesos registrados para editar.")
                 else:
                     opciones_editar = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')}": lic for lic in licitaciones_validas}
-                    proc_edit_label = st.selectbox("Selecciona el proceso que deseas modificar:", list(opciones_editar.keys()), key="sel_proc_edit")
+                    proc_edit_label = st.selectbox("Selecciona el proceso a modificar:", list(opciones_editar.keys()), key="sel_proc_edit")
                     p_ed = opciones_editar[proc_edit_label]
                     
                     with st.form("form_editar_proceso", clear_on_submit=False):
-                        st.caption("Modifica los valores y presiona Actualizar al final del formulario.")
+                        st.caption("Modifica los valores y presiona Actualizar al final.")
                         e1, e2, e3, e4 = st.tabs(["01-02", "03-05", "06-08", "09-12"])
                         
                         with e1:
                             st.write("**01 BÁSICOS**")
-                            num_interno_e = st.number_input("Nº Interno (No modificable)", value=int(p_ed.get('numero_interno', 1)), disabled=True, key="num_interno_e")
+                            num_interno_e = st.number_input("Nº Interno", value=int(p_ed.get('numero_interno', 1)), disabled=True, key="num_interno_e")
                             num_proceso_e = st.text_input("Nº Proceso", value=str(p_ed.get('numero_proceso', '')), key="num_proceso_e")
                             entidad_e = st.text_input("Entidad", value=str(p_ed.get('entidad', '')), key="entidad_e")
                             objeto_e = st.text_area("Objeto", value=str(p_ed.get('objeto', '')), key="objeto_e")
                             
-                            idx_mod_e = get_index_safe(LISTA_MODALIDADES, p_ed.get('modalidad', ''))
-                            modalidad_e = st.selectbox("Modalidad", LISTA_MODALIDADES, index=idx_mod_e, key="modalidad_e")
+                            modalidad_e = st.selectbox("Modalidad", LISTA_MODALIDADES, index=get_index_safe(LISTA_MODALIDADES, p_ed.get('modalidad', '')), key="modalidad_e")
                             cuantia_txt_e = st.text_input("Presupuesto Oficial (COP)", value=formatear_miles_input(p_ed.get('cuantia_presupuesto', 0)), key="cuantia_e")
+                            forma_pago_e = st.text_input("Forma de Pago", value=str(p_ed.get('forma_pago', 'Mensualidades vencidas / Pagos parciales')), key="fpago_e")
+                            iniciativas_e = st.selectbox("¿Iniciativas Ciudadanas?", LISTA_INICIATIVAS, index=get_index_safe(LISTA_INICIATIVAS, p_ed.get('iniciativas_ciudadanas', '')), key="inic_e")
                             
-                            idx_etapa_e = get_index_safe(LISTA_ETAPAS, p_ed.get('etapa_actual', ''))
-                            etapa_e = st.selectbox("Etapa Actual", LISTA_ETAPAS, index=idx_etapa_e, key="etapa_e")
-                            idx_est_e = get_index_safe(LISTA_ESTADOS_REVISION, p_ed.get('estado_revision', ''))
-                            estado_e = st.selectbox("Estado Revisión", LISTA_ESTADOS_REVISION, index=idx_est_e, key="estado_e")
+                            etapa_e = st.selectbox("Etapa Actual", LISTA_ETAPAS, index=get_index_safe(LISTA_ETAPAS, p_ed.get('etapa_actual', '')), key="etapa_e")
+                            estado_e = st.selectbox("Estado Revisión", LISTA_ESTADOS_REVISION, index=get_index_safe(LISTA_ESTADOS_REVISION, p_ed.get('estado_revision', '')), key="estado_e")
                             lugar_e = st.text_input("Lugar Ejecución", value=str(p_ed.get('lugar_ejecucion', '')), key="lugar_e")
                             tiempo_e = st.text_input("Tiempo Ejecución", value=str(p_ed.get('tiempo_ejecucion', '')), key="tiempo_e")
                             
-                            st.write("**02 CRONOGRAMA (Calendario)**")
-                            f_int_dt, _ = parsear_fecha_hora_db(p_ed.get('fecha_manifestacion_interes'))
-                            f_sor_dt, _ = parsear_fecha_hora_db(p_ed.get('fecha_sorteo'))
-                            f_mip_dt, _ = parsear_fecha_hora_db(p_ed.get('fecha_limitacion_mipyme'))
-                            f_obsp_dt, _ = parsear_fecha_hora_db(p_ed.get('fecha_obs_prepliego'))
-                            f_obsd_dt, _ = parsear_fecha_hora_db(p_ed.get('fecha_obs_pliego_def'))
+                            st.write("**02 CRONOGRAMA CON HORA (Calendario)**")
+                            f_int_dt, h_int_dt = parsear_fecha_hora_db(p_ed.get('fecha_manifestacion_interes'))
+                            f_sor_dt, h_sor_dt = parsear_fecha_hora_db(p_ed.get('fecha_sorteo'))
+                            f_mip_dt, h_mip_dt = parsear_fecha_hora_db(p_ed.get('fecha_limitacion_mipyme'))
+                            f_obsp_dt, h_obsp_dt = parsear_fecha_hora_db(p_ed.get('fecha_obs_prepliego'))
+                            f_obsd_dt, h_obsd_dt = parsear_fecha_hora_db(p_ed.get('fecha_obs_pliego_def'))
                             f_ofe_dt, h_ofe_dt = parsear_fecha_hora_db(p_ed.get('fecha_presentacion_oferta'))
                             
-                            f_int_e = selector_calendario_seguro("📅 Manifestación Interés", f_int_dt, "f_int_e")
-                            f_sor_e = selector_calendario_seguro("📅 Fecha Sorteo", f_sor_dt, "f_sor_e")
-                            f_mip_e = selector_calendario_seguro("📅 Límite Mipyme", f_mip_dt, "f_mip_e")
-                            f_obsp_e = selector_calendario_seguro("📅 Obs. Proyecto Pliego", f_obsp_dt, "f_obsp_e")
-                            f_obsd_e = selector_calendario_seguro("📅 Obs. Pliego Definitivo", f_obsd_dt, "f_obsd_e")
-                            f_ofe_e = selector_calendario_seguro("📅 Fecha Presentación Ofertas", f_ofe_dt, "f_ofe_e")
-                            hora_ofe_e = st.time_input("⏰ Hora de Cierre Oferta", value=h_ofe_dt or datetime.time(10, 0), key="h_ofe_e")
+                            f_int_e, h_int_e = selector_fecha_hora_seguro("📅 Manifestación Interés", f_int_dt, h_int_dt or datetime.time(17, 0), "int_e")
+                            f_sor_e, h_sor_e = selector_fecha_hora_seguro("📅 Fecha Sorteo", f_sor_dt, h_sor_dt or datetime.time(10, 0), "sor_e")
+                            f_mip_e, h_mip_e = selector_fecha_hora_seguro("📅 Límite Mipyme", f_mip_dt, h_mip_dt or datetime.time(17, 0), "mip_e")
+                            f_obsp_e, h_obsp_e = selector_fecha_hora_seguro("📅 Obs. Proyecto Pliego", f_obsp_dt, h_obsp_dt or datetime.time(17, 0), "obsp_e")
+                            f_obsd_e, h_obsd_e = selector_fecha_hora_seguro("📅 Obs. Pliego Definitivo", f_obsd_dt, h_obsd_dt or datetime.time(17, 0), "obsd_e")
+                            f_ofe_e, h_ofe_e = selector_fecha_hora_seguro("📅 Presentación Ofertas", f_ofe_dt, h_ofe_dt or datetime.time(10, 0), "ofe_e")
 
                         with e2:
                             st.write("**03 UNSPSC | 04 TRIBUTOS**")
-                            unspsc_input_e = st.text_area("Códigos UNSPSC", value=str(p_ed.get('codigos_unspsc_req', '')), height=110, key="unspsc_e")
+                            unspsc_input_e = st.text_area("Códigos UNSPSC", value=str(p_ed.get('codigos_unspsc_req', '')), height=100, key="unspsc_e")
                             cant_u_e = st.number_input("CANT. COD. REQ (Mínimo exigido)", value=int(p_ed.get('cant_codigos_unspsc_req', 0)), min_value=0, key="cant_u_e")
                             estampillas_e = st.text_area("Estampillas / Descuentos", value=str(p_ed.get('estampillas', '')), key="estampillas_e")
                             
@@ -690,8 +887,8 @@ def main():
                             r_ract_e = st.number_input("Rent. Activo (>=)", value=float(p_ed.get('req_rentabilidad_activo_min', 0.0)), step=0.05, key="r_ract_e")
                         
                         with e3:
-                            st.write("**06 RESUMEN EJECUCIÓN**")
-                            resumen_e = st.text_area("Resumen y Requerimientos Generales", value=str(p_ed.get('resumen_requerimientos_generales', '')), key="resumen_e")
+                            st.write("**06 RESUMEN, CERTIFICADOS Y TALENTO HUMANO**")
+                            resumen_e = st.text_area("Resumen y Requerimientos Generales (Incluye Talento Humano y Certificados)", value=str(p_ed.get('resumen_requerimientos_generales', '')), height=140, key="resumen_e")
                             st.write("**07 EXPERIENCIA**")
                             eg_cont_e = st.text_input("Exp. General Contratos", value=str(p_ed.get('exp_general_contratos', '')), key="eg_cont_e")
                             eg_desc_e = st.text_area("Desc. Exp. General", value=str(p_ed.get('exp_general_descripcion', '')), key="eg_desc_e")
@@ -716,20 +913,17 @@ def main():
                             pt_tot_e = st.number_input("Total Puntos", value=float(p_ed.get('total_puntos', 100.0)), step=0.5, key="pt_tot_e")
                             
                             st.write("**10 RESPONSABLE | 11 LINK**")
-                            idx_resp_e = get_index_safe(LISTA_RESPONSABLES, p_ed.get('responsable_proceso', ''))
-                            responsable_e = st.selectbox("Responsable del Proceso", options=LISTA_RESPONSABLES, index=idx_resp_e, key="responsable_e")
+                            responsable_e = st.selectbox("Responsable del Proceso", options=LISTA_RESPONSABLES, index=get_index_safe(LISTA_RESPONSABLES, p_ed.get('responsable_proceso', '')), key="responsable_e")
                             obs_fin_e = st.text_area("Observaciones y Recomendaciones", value=str(p_ed.get('observaciones_recomendaciones', '')), key="obs_fin_e")
                             link_secop_e = st.text_input("Link Permanente SECOP II", value=str(p_ed.get('link_secop', '')), key="link_e")
                             
                             st.write("**12 GARANTÍAS (Pólizas)**")
-                            idx_polt_e = get_index_safe(LISTA_POLIZA, p_ed.get('poliza', ''))
-                            pol_tipo_e = st.selectbox("¿Exige Póliza?", options=LISTA_POLIZA, index=idx_polt_e, key="pol_tipo_e")
+                            pol_tipo_e = st.selectbox("¿Exige Póliza?", options=LISTA_POLIZA, index=get_index_safe(LISTA_POLIZA, p_ed.get('poliza', '')), key="pol_tipo_e")
                             pol_ser_e = st.text_input("Póliza Seriedad Oferta", value=str(p_ed.get('poliza_seriedad_oferta', '')), key="pol_ser_e")
                             pol_fec_dt, _ = parsear_fecha_hora_db(p_ed.get('fecha_solicitud_poliza'))
-                            pol_fec_obj_e = selector_calendario_seguro("📅 Fecha Solicitud Póliza", pol_fec_dt, "pol_fec_e")
+                            pol_fec_obj_e, _ = selector_fecha_hora_seguro("📅 Fecha Solicitud Póliza", pol_fec_dt, datetime.time(9, 0), "pol_fec_e")
                             pol_vr_txt_e = st.text_input("Vr. Póliza ($ COP)", value=formatear_miles_input(p_ed.get('vr_poliza', 0)), key="pol_vr_e")
-                            idx_pole_e = get_index_safe(LISTA_ESTADO_POLIZA, p_ed.get('estado_poliza', ''))
-                            pol_est_e = st.selectbox("Estado de la Póliza", options=LISTA_ESTADO_POLIZA, index=idx_pole_e, key="pol_est_e")
+                            pol_est_e = st.selectbox("Estado de la Póliza", options=LISTA_ESTADO_POLIZA, index=get_index_safe(LISTA_ESTADO_POLIZA, p_ed.get('estado_poliza', '')), key="pol_est_e")
 
                         if st.form_submit_button("💾 Actualizar Proceso", type="primary"):
                             if num_proceso_e and entidad_e:
@@ -739,16 +933,18 @@ def main():
                                     "objeto": objeto_e,
                                     "modalidad": modalidad_e,
                                     "cuantia_presupuesto": limpiar_moneda_input(cuantia_txt_e),
+                                    "forma_pago": forma_pago_e,
+                                    "iniciativas_ciudadanas": iniciativas_e,
                                     "etapa_actual": etapa_e,
                                     "estado_revision": estado_e,
                                     "lugar_ejecucion": lugar_e,
                                     "tiempo_ejecucion": tiempo_e,
-                                    "fecha_manifestacion_interes": formatear_fecha_db(f_int_e),
-                                    "fecha_sorteo": formatear_fecha_db(f_sor_e),
-                                    "fecha_limitacion_mipyme": formatear_fecha_db(f_mip_e),
-                                    "fecha_obs_prepliego": formatear_fecha_db(f_obsp_e),
-                                    "fecha_obs_pliego_def": formatear_fecha_db(f_obsd_e),
-                                    "fecha_presentacion_oferta": formatear_fecha_db(f_ofe_e, hora_ofe_e),
+                                    "fecha_manifestacion_interes": formatear_fecha_db(f_int_e, h_int_e),
+                                    "fecha_sorteo": formatear_fecha_db(f_sor_e, h_sor_e),
+                                    "fecha_limitacion_mipyme": formatear_fecha_db(f_mip_e, h_mip_e),
+                                    "fecha_obs_prepliego": formatear_fecha_db(f_obsp_e, h_obsp_e),
+                                    "fecha_obs_pliego_def": formatear_fecha_db(f_obsd_e, h_obsd_e),
+                                    "fecha_presentacion_oferta": formatear_fecha_db(f_ofe_e, h_ofe_e),
                                     "codigos_unspsc_req": limpiar_codigos_unspsc(unspsc_input_e) or "N/A",
                                     "cant_codigos_unspsc_req": int(cant_u_e),
                                     "estampillas": estampillas_e,
@@ -783,7 +979,7 @@ def main():
                                     "estado_poliza": pol_est_e
                                 }
                                 try:
-                                    obtener_cliente_supabase().table("licitaciones_secop").update(dict_actualizado).eq("numero_interno", num_interno_e).execute()
+                                    guardar_licitacion_seguro(dict_actualizado, modo="update", num_interno=num_interno_e)
                                     st.success("✅ ¡Proceso actualizado con éxito!")
                                     st.rerun()
                                 except Exception as e:
@@ -809,8 +1005,7 @@ def main():
                     ct = st.number_input("Cap. Trabajo", value=0.0, step=1000000.0)
                     
                     st.write("**Clasificación UNSPSC del RUP**")
-                    st.caption("Pega los códigos UNSPSC registrados en el RUP:")
-                    unspsc_rup_raw = st.text_area("Códigos UNSPSC en RUP", height=120, placeholder="86101600; 86111500; 90111600...")
+                    unspsc_rup_raw = st.text_area("Códigos UNSPSC en RUP", height=110, placeholder="86101600; 86111500; 90111600...")
                     
                     if st.form_submit_button("💾 Guardar Empresa (RUP)", type="primary"):
                         if alias and nit:
@@ -842,39 +1037,64 @@ def main():
                             except Exception as e:
                                 st.error(f"Error al guardar empresa: {e}")
         else:
-            st.info("ℹ️ **Modo Lectura Activo**: Tienes perfil Temporal. Puedes evaluar licitaciones, consultar empresas y descargar informes PDF, pero la edición de la base de datos está deshabilitada por el Administrador.")
+            st.info("ℹ️ **Modo Lectura Activo**: Perfil Temporal. Puedes usar la Matriz de Empresas, cruzar licitaciones y descargar informes PDF.")
 
     # =====================================================================
-    # PANEL CENTRAL DIVIDIDO POR PESTAÑAS (EVALUADOR Y DIRECTORIO)
+    # PANEL CENTRAL DIVIDIDO EN 3 PESTAÑAS PRINCIPALES
     # =====================================================================
-    tab_eval, tab_directorio = st.tabs(["⚖️ Evaluación de Procesos", "🏢 Directorio de Empresas (RUP)"])
+    tab_eval, tab_directorio, tab_dashboard = st.tabs([
+        "⚖️ Evaluación y Matriz de Empresas",
+        "🏢 Directorio de Empresas (RUP)",
+        "📈 Dashboard y Estadísticas"
+    ])
 
-    # ------------------ PESTAÑA 1: EVALUADOR Y GENERADOR DE PDF ------------------
+    # ------------------ PESTAÑA 1: EVALUADOR Y MATRIZ MASIVA ------------------
     with tab_eval:
         if not licitaciones_validas: 
             st.warning("⚠️ No hay licitaciones registradas. Agrega una desde el menú lateral izquierdo.")
         else:
             st.header("1. Selección del Proceso SECOP II")
-            opciones_lic = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')}": lic for lic in licitaciones_validas}
+            opciones_lic = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')} — {lic.get('entidad', '')[:45]}": lic for lic in licitaciones_validas}
             lic_label = st.selectbox("Licitación a evaluar:", options=list(opciones_lic.keys()))
             licitacion_actual = opciones_lic[lic_label]
 
-            st.header("2. Configuración del Proponente")
+            st.subheader(f"📋 {licitacion_actual.get('numero_proceso', '')} — {licitacion_actual.get('entidad', '')}")
+            st.write(f"**Objeto:** {licitacion_actual.get('objeto', '')}")
+            st.write(f"**Cuantía:** {formatear_moneda_cop(licitacion_actual.get('cuantia_presupuesto', 0))} | **Etapa:** {licitacion_actual.get('etapa_actual', 'N/A')} | **Estado:** {licitacion_actual.get('estado_revision', 'N/A')} | **Plazo:** {licitacion_actual.get('tiempo_ejecucion', 'N/A')}")
+
+            # --- PUNTO 1 DE EDWARD: MATRIZ GENERAL DE TODAS LAS EMPRESAS ---
+            with st.expander("🚦 Tablero General de Pre-viabilidad (Todas las Empresas vs. Este Proceso)", expanded=True):
+                st.caption("Identifica de un solo vistazo qué empresas cumplen individualmente y cuáles sirven como socias para Unión Temporal sin evaluarlas una por una.")
+                if empresas_validas:
+                    filas_matriz = generar_matriz_todas_empresas(licitacion_actual, empresas_validas)
+                    df_matriz = pd.DataFrame(filas_matriz)
+                    st.dataframe(df_matriz, use_container_width=True, hide_index=True)
+                    
+                    try:
+                        pdf_tablero_bytes = generar_pdf_tablero_empresas(licitacion_actual, filas_matriz)
+                        st.download_button(
+                            label="⬇️ Descargar Informe Ejecutivo General (Todas las Empresas en PDF)",
+                            data=pdf_tablero_bytes,
+                            file_name=f"Tablero_Empresas_{licitacion_actual.get('numero_proceso', 'Proceso')}.pdf",
+                            mime="application/pdf"
+                        )
+                    except Exception as e:
+                        st.error(f"Error al generar el PDF del tablero general: {e}")
+                else:
+                    st.info("No hay empresas registradas para cruzar.")
+
+            st.divider()
+            st.header("2. Simulación Detallada por Proponente (Individual o UT)")
             tipo_figura = st.radio("Modalidad de Participación:", ["INDIVIDUAL", "UNION_TEMPORAL"], horizontal=True)
-            empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
             mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
             
             if tipo_figura == "INDIVIDUAL":
                 alias_sel = st.selectbox("Empresa (RUP):", list(mapa_empresas.keys()))
-                empresas_elegidas = [alias_sel]
+                empresas_elegidas = [alias_sel] if alias_sel else []
             else:
                 empresas_elegidas = st.multiselect("Integrantes UT:", list(mapa_empresas.keys()), default=[list(mapa_empresas.keys())[0]] if mapa_empresas else [])
                 
             nombre_proponente = st.text_input("Nombre Organización / UT:", value=f"UT {' + '.join(empresas_elegidas)}" if tipo_figura != "INDIVIDUAL" else (empresas_elegidas[0] if empresas_elegidas else ""))
-
-            st.subheader(f"📋 {licitacion_actual.get('numero_proceso', '')} — {licitacion_actual.get('entidad', '')}")
-            st.write(f"**Objeto:** {licitacion_actual.get('objeto', '')}")
-            st.write(f"**Cuantía:** {formatear_moneda_cop(licitacion_actual.get('cuantia_presupuesto', 0))} | **Etapa:** {licitacion_actual.get('etapa_actual', 'N/A')} | **Plazo:** {licitacion_actual.get('tiempo_ejecucion', 'N/A')}")
 
             if empresas_elegidas:
                 integrantes_simulacion = []
@@ -888,23 +1108,70 @@ def main():
 
                 resultado_sim = consolidar_proponente_plural(licitacion_actual, integrantes_simulacion, tipo_figura)
                 
+                # --- PUNTO 9 DE EDWARD: DESGLOSE DETALLADO DE CÓDIGOS UNSPSC ---
                 cruce_u = resultado_sim["cruce_unspsc"]
-                st.subheader("🏷️ Cruce de Clasificación UNSPSC (Pliego vs. RUP)")
+                st.subheader("🏷️ Cruce Detallado de Clasificación UNSPSC (Pliego vs. RUP)")
                 col_u1, col_u2, col_u3, col_u4 = st.columns(4)
                 col_u1.metric("Publicados en Proceso", cruce_u["total_publicados"])
                 col_u2.metric("Mínimo Exigido (Pliego)", cruce_u["min_exigido"])
                 col_u3.metric("Cumplidos en RUP", cruce_u["codigos_cumplidos"])
                 col_u4.metric("Estado UNSPSC", cruce_u["estado_unspsc"])
-                if cruce_u["coincidentes"]: st.caption(f"**Códigos aportados por el RUP:** {'; '.join(cruce_u['coincidentes'])}")
+                
+                c_l1, c_l2, c_l3 = st.columns(3)
+                with c_l1:
+                    st.markdown(f"**📋 Solicitados en Pliego ({cruce_u['total_publicados']}) — Exige mín. {cruce_u['min_exigido']}:**")
+                    st.info("; ".join(cruce_u["lista_solicitados"]) if cruce_u["lista_solicitados"] else "No especificados")
+                with c_l2:
+                    st.markdown(f"**✅ Códigos QUE CUMPLEN en RUP ({len(cruce_u['coincidentes'])}):**")
+                    st.success("; ".join(cruce_u["coincidentes"]) if cruce_u["coincidentes"] else "Ninguno coincide")
+                with c_l3:
+                    st.markdown(f"**❌ Códigos FALTANTES ({len(cruce_u['faltantes'])}):**")
+                    st.error("; ".join(cruce_u["faltantes"]) if cruce_u["faltantes"] else "Ninguno (100% cubiertos)")
 
                 st.subheader("📊 Consolidado Financiero")
-                df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
+                df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Regla": item["regla"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
                 st.dataframe(df_comp, use_container_width=True, hide_index=True)
+                st.caption("ℹ️ *Nota técnica: El estado 'REVISAR' aparece cuando la empresa registra $0 en Gastos de Intereses (división por cero matemáticamente indeterminada, aunque favorable jurídicamente) o cuando no se definió el mínimo de códigos UNSPSC.*")
                 st.info(f"DICTAMEN FINANCIERO GLOBAL: **{resultado_sim['estado_global']}**")
-                st.divider()
 
-                st.header("3. Emisión de Informe Ejecutivo en PDF")
+                # --- PUNTO 16 DE EDWARD: CALCULADORA ESTIMATIVA DE DESCUENTOS Y SALDO REAL ---
+                with st.expander("🧮 Simulador de Estampillas, Impuestos y Saldo Neto Real de Ejecución", expanded=False):
+                    presupuesto_base = float(licitacion_actual.get('cuantia_presupuesto', 0) or 0)
+                    c_d1, c_d2, c_d3, c_d4 = st.columns(4)
+                    iva_pct = c_d1.selectbox("Régimen IVA en Presupuesto", [0.0, 19.0], index=0, help="Si el presupuesto incluye IVA del 19%, los descuentos se calculan sobre el subtotal antes de IVA.")
+                    retefuente_pct = c_d2.number_input("Retefuente (%)", value=4.0, step=0.5)
+                    reteica_pct = c_d3.number_input("ReteICA (%)", value=0.966, step=0.1)
+                    estampillas_pct = c_d4.number_input("Total Estampillas / Otros (%)", value=4.1, step=0.5, help="Ej. Adulto Mayor (2%) + Procultura (0.5%) + U. Distrital (1.1%) + U. Pedagógica (0.5%) = 4.1%")
+                    
+                    subtotal_sin_iva = presupuesto_base / (1 + (iva_pct / 100.0)) if iva_pct > 0 else presupuesto_base
+                    valor_iva = presupuesto_base - subtotal_sin_iva
+                    pct_descuentos_tot = retefuente_pct + reteica_pct + estampillas_pct
+                    valor_descuentos = subtotal_sin_iva * (pct_descuentos_tot / 100.0)
+                    costo_poliza_est = float(licitacion_actual.get('vr_poliza', 0) or 0)
+                    saldo_real_ejecucion = subtotal_sin_iva - valor_descuentos - costo_poliza_est
+                    
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Presupuesto Oficial", formatear_moneda_cop(presupuesto_base))
+                    m2.metric("Subtotal Base (Sin IVA)", formatear_moneda_cop(subtotal_sin_iva))
+                    m3.metric(f"Descuentos ({pct_descuentos_tot:.2f}%)", formatear_moneda_cop(valor_descuentos))
+                    m4.metric("💰 Saldo Real Ejecución", formatear_moneda_cop(saldo_real_ejecucion))
+                    
+                    resumen_tributario_pdf = (
+                        f"{licitacion_actual.get('estampillas', 'N/A')} | "
+                        f"Simulación Financiera: Base sin IVA {formatear_moneda_cop(subtotal_sin_iva)} - "
+                        f"Descuentos Est. ({pct_descuentos_tot:.2f}%: {formatear_moneda_cop(valor_descuentos)}) = "
+                        f"SALDO NETO REAL ESTIMADO: {formatear_moneda_cop(saldo_real_ejecucion)}"
+                    )
+
+                st.divider()
+                st.header("3. Emisión de Informe Ejecutivo Individual / UT en PDF")
                 lic_limpia_pdf = {k: ("N/A" if v is None else v) for k, v in licitacion_actual.items()}
+                lic_limpia_pdf["estampillas"] = resumen_tributario_pdf
+                lic_limpia_pdf["codigos_unspsc_req"] = (
+                    f"SOLICITADOS ({cruce_u['total_publicados']}): {'; '.join(cruce_u['lista_solicitados'])} || "
+                    f"CUMPLIDOS EN RUP ({len(cruce_u['coincidentes'])}): {'; '.join(cruce_u['coincidentes']) if cruce_u['coincidentes'] else 'Ninguno'} || "
+                    f"FALTANTES ({len(cruce_u['faltantes'])}): {'; '.join(cruce_u['faltantes']) if cruce_u['faltantes'] else 'Ninguno'}"
+                )
                 
                 tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
                 dic_simulacion = {
@@ -918,9 +1185,9 @@ def main():
                 try:
                     pdf_bytes = generar_informe_ejecutivo_pdf(licitacion=lic_limpia_pdf, simulacion=dic_simulacion, integrantes=integrantes_simulacion)
                     st.download_button(
-                        label="⬇️ Descargar Informe Ejecutivo Corporativo (12 Secciones)",
+                        label="⬇️ Descargar Informe Ejecutivo Individual / UT (12 Secciones)",
                         data=pdf_bytes,
-                        file_name=f"Informe_Completo_{licitacion_actual.get('numero_proceso', '0')}.pdf",
+                        file_name=f"Informe_Completo_{licitacion_actual.get('numero_proceso', '0')}_{nombre_proponente}.pdf",
                         mime="application/pdf",
                         type="primary"
                     )
@@ -929,27 +1196,42 @@ def main():
 
     # ------------------ PESTAÑA 2: DIRECTORIO DE EMPRESAS ------------------
     with tab_directorio:
-        st.header("🏢 Base Empresarial y Capacidad Financiera")
-        empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
+        st.header("🏢 Base Empresarial y Capacidad FinancieraCompleta (RUP)")
         if not empresas_validas:
             st.warning("⚠️ No hay empresas registradas. Agrega una desde el menú lateral izquierdo.")
         else:
             df_empresas = pd.DataFrame(empresas_validas)
-            cols_mostrar = {"alias_codigo": "Alias", "nit": "NIT", "razon_social": "Razón Social", "capital_trabajo": "Cap. Trabajo ($)", "codigos_unspsc_rup": "Catálogo UNSPSC"}
+            cols_mostrar = {
+                "alias_codigo": "Alias",
+                "nit": "NIT",
+                "razon_social": "Razón Social",
+                "activo_corriente": "Act. Corriente",
+                "pasivo_corriente": "Pas. Corriente",
+                "activo_total": "Act. Total",
+                "pasivo_total": "Pas. Total",
+                "patrimonio": "Patrimonio",
+                "utilidad_operacional": "Utilidad Op.",
+                "gastos_intereses": "Gastos Int.",
+                "capital_trabajo": "Cap. Trabajo ($)",
+                "codigos_unspsc_rup": "Catálogo UNSPSC"
+            }
             cols_existentes = {k: v for k, v in cols_mostrar.items() if k in df_empresas.columns}
             df_vista = df_empresas[list(cols_existentes.keys())].rename(columns=cols_existentes)
             
-            if "Cap. Trabajo ($)" in df_vista.columns: df_vista["Cap. Trabajo ($)"] = df_vista["Cap. Trabajo ($)"].apply(lambda x: formatear_moneda_cop(x))
+            for col_mon in ["Act. Corriente", "Pas. Corriente", "Act. Total", "Pas. Total", "Patrimonio", "Utilidad Op.", "Gastos Int.", "Cap. Trabajo ($)"]:
+                if col_mon in df_vista.columns:
+                    df_vista[col_mon] = df_vista[col_mon].apply(lambda x: formatear_moneda_cop(x))
+            
             if "Catálogo UNSPSC" in df_vista.columns:
-                df_vista["Cant. Códigos"] = df_vista["Catálogo UNSPSC"].apply(lambda x: len(str(x).split(";")) if x and str(x) != "N/A" else 0)
+                df_vista["Cant. Códigos"] = df_vista["Catálogo UNSPSC"].apply(lambda x: len(re.findall(r'\b\d{8}\b', str(x))) if x and str(x) != "N/A" else 0)
                 df_vista = df_vista.drop(columns=["Catálogo UNSPSC"])
             
             st.dataframe(df_vista, use_container_width=True, hide_index=True)
             st.divider()
             
-            st.subheader("🔍 Ficha Técnica Detallada")
+            st.subheader("🔍 Ficha Técnica Financiera y Sábana de Códigos RUP")
             mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
-            alias_sel = st.selectbox("Selecciona una empresa para analizar sus indicadores y códigos:", list(mapa_empresas.keys()))
+            alias_sel = st.selectbox("Selecciona una empresa para auditar todas sus cuentas y códigos:", list(mapa_empresas.keys()))
             
             if alias_sel:
                 e_data = mapa_empresas[alias_sel]
@@ -958,27 +1240,82 @@ def main():
                 
                 liq = (ac / pc) if pc > 0 else 0
                 end = (pt / at) if at > 0 else 0
-                cob = (uo / gi) if gi > 0 else ("INDETERMINADO" if gi == 0 else 0)
+                cob = (uo / gi) if gi > 0 else ("INDETERMINADO ($0 Intereses)" if gi == 0 else 0)
                 rp = (uo / pat) if pat > 0 else 0
                 ra = (uo / at) if at > 0 else 0
                 
-                st.markdown(f"**Empresa:** {e_data.get('razon_social', alias_sel)} (NIT: {e_data.get('nit', 'N/A')})")
+                st.markdown(f"### {e_data.get('razon_social', alias_sel)} — NIT: `{e_data.get('nit', 'N/A')}`")
                 col_i1, col_i2, col_i3, col_i4, col_i5 = st.columns(5)
                 col_i1.metric("Liquidez (x)", f"{liq:,.2f}")
                 col_i2.metric("Endeudamiento", f"{end*100:,.2f}%")
-                col_i3.metric("Cobertura Int. (x)", cob if isinstance(cob, str) else f"{cob:,.2f}")
+                col_i3.metric("Cobertura Int.", cob if isinstance(cob, str) else f"{cob:,.2f}")
                 col_i4.metric("Rent. Patrimonio", f"{rp*100:,.2f}%")
                 col_i5.metric("Rent. Activo", f"{ra*100:,.2f}%")
                 
-                st.write(f"**Capital de Trabajo:** {formatear_moneda_cop(ct)}")
+                c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+                c_f1.write(f"**Activo Corriente:** {formatear_moneda_cop(ac)}")
+                c_f1.write(f"**Pasivo Corriente:** {formatear_moneda_cop(pc)}")
+                c_f2.write(f"**Activo Total:** {formatear_moneda_cop(at)}")
+                c_f2.write(f"**Pasivo Total:** {formatear_moneda_cop(pt)}")
+                c_f3.write(f"**Patrimonio:** {formatear_moneda_cop(pat)}")
+                c_f3.write(f"**Capital de Trabajo:** {formatear_moneda_cop(ct)}")
+                c_f4.write(f"**Utilidad Operacional:** {formatear_moneda_cop(uo)}")
+                c_f4.write(f"**Gastos de Intereses:** {formatear_moneda_cop(gi)}")
                 
-                st.write("**Catálogo de Códigos UNSPSC registrados en RUP:**")
+                st.write("**Catálogo Completo de Códigos UNSPSC registrados en RUP:**")
                 cods_str = str(e_data.get("codigos_unspsc_rup", "No registra"))
                 if cods_str and cods_str != "N/A":
-                    lista_cods = [c.strip() for c in cods_str.split(";")]
-                    st.caption(f"Total inscritos: {len(lista_cods)} códigos")
+                    lista_cods = [c.strip() for c in cods_str.split(";") if c.strip()]
+                    st.caption(f"Total inscritos: {len(lista_cods)} códigos UNSPSC")
                     st.info(" ; ".join(lista_cods))
-                else: st.info("Sin códigos registrados.")
+                else:
+                    st.info("Sin códigos registrados.")
+
+    # ------------------ PESTAÑA 3: DASHBOARD Y ESTADÍSTICAS (PUNTO 22) ------------------
+    with tab_dashboard:
+        st.header("📈 Tablero Gerencial de Control y Estadísticas")
+        if not licitaciones_validas:
+            st.info("No hay procesos cargados para generar estadísticas.")
+        else:
+            df_lic = pd.DataFrame(licitaciones_validas)
+            df_lic["cuantia_num"] = pd.to_numeric(df_lic.get("cuantia_presupuesto", 0), errors="coerce").fillna(0)
+            
+            total_proc = len(df_lic)
+            presupuesto_total = df_lic["cuantia_num"].sum()
+            viables_activos = len(df_lic[df_lic["estado_revision"].isin(["Viable", "Alistamiento", "Presentacion"])])
+            presentadas = len(df_lic[df_lic["estado_revision"].isin(["Presentada", "Seleccionada"])])
+            
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total Procesos Analizados", total_proc)
+            k2.metric("Presupuesto Total Evaluado", formatear_moneda_cop(presupuesto_total))
+            k3.metric("En Viabilidad / Alistamiento", viables_activos)
+            k4.metric("Ofertas Presentadas", presentadas)
+            
+            st.divider()
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                st.subheader("📊 Procesos por Estado de Revisión")
+                conteo_estado = df_lic["estado_revision"].value_counts().reset_index()
+                conteo_estado.columns = ["Estado de Revisión", "Cantidad"]
+                st.bar_chart(conteo_estado.set_index("Estado de Revisión"))
+                st.dataframe(conteo_estado, use_container_width=True, hide_index=True)
+                
+            with col_g2:
+                st.subheader("👥 Carga y Presupuesto por Responsable")
+                resumen_resp = df_lic.groupby("responsable_proceso").agg(
+                    Procesos=("numero_interno", "count"),
+                    Presupuesto_Total=("cuantia_num", "sum")
+                ).reset_index().rename(columns={"responsable_proceso": "Responsable"})
+                st.bar_chart(resumen_resp.set_index("Responsable")["Procesupuesto_Total" if "Procesupuesto_Total" in resumen_resp else "Procesos"])
+                resumen_resp["Presupuesto_Total"] = resumen_resp["Presupuesto_Total"].apply(formatear_moneda_cop)
+                st.dataframe(resumen_resp, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("🏛️ Resumen General de Procesos por Etapa y Modalidad")
+            tabla_resumen = df_lic[["numero_interno", "numero_proceso", "entidad", "modalidad", "etapa_actual", "estado_revision", "responsable_proceso", "cuantia_num"]].copy()
+            tabla_resumen["cuantia_num"] = tabla_resumen["cuantia_num"].apply(formatear_moneda_cop)
+            tabla_resumen.columns = ["Nº", "Proceso", "Entidad", "Modalidad", "Etapa", "Estado", "Responsable", "Presupuesto"]
+            st.dataframe(tabla_resumen, use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
     main()
