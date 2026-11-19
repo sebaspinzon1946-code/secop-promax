@@ -1279,7 +1279,7 @@ def main():
                 st.subheader("👥 Carga por Responsable")
                 st.bar_chart(df_lic["responsable_proceso"].value_counts())
 
-with tab_escaner:
+    with tab_escaner:
         renderizar_modulo_escaner()
 if __name__ == "__main__":
     main()
