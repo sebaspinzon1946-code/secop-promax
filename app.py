@@ -1,6 +1,5 @@
 """
-Módulo Único Definitivo: Centro de Comando SECOP II — Fase 2 Completa
-(Experiencias RUP por Contrato, Validación SMMLV, Topes, Matriz Masiva, Simulador Tributario, Adendas y Dashboard)
+Módulo Único Definitivo: Centro de Comando SECOP II — Fase 2 Completa (Storage PDF + Evaluador Topes SMMLV)
 """
 
 import io
@@ -23,7 +22,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from generador_pdf import generar_informe_ejecutivo_pdf, formatear_moneda_cop, formatear_indicador
 
 # =====================================================================
-# LISTAS OFICIALES Y CATÁLOGOS NORMATIVOS (FASE 2)
+# LISTAS OFICIALES Y CATÁLOGOS NORMATIVOS
 # =====================================================================
 LISTA_MODALIDADES = [
     "Licitacion Pública",
@@ -113,7 +112,7 @@ MAPA_PROFESIONES_TP = {
 }
 
 # =====================================================================
-# 1. CONEXIÓN A SUPABASE Y UTILIDADES DE FORMATO
+# 1. CONEXIÓN A SUPABASE, STORAGE Y UTILIDADES DE FORMATO
 # =====================================================================
 def obtener_cliente_supabase():
     url = "https://mqcjmrdznbgfhpmnmvns.supabase.co"
@@ -122,7 +121,8 @@ def obtener_cliente_supabase():
         try:
             from supabase import create_client
             return create_client(url, key)
-        except Exception: return None
+        except Exception:
+            return None
     return None
 
 def autenticar_usuario(username, password):
@@ -130,8 +130,10 @@ def autenticar_usuario(username, password):
     if cliente:
         try:
             res = cliente.table("usuarios_plataforma").select("*").eq("username", username).eq("password", password).execute()
-            if res.data and len(res.data) > 0: return res.data[0]
-        except Exception: return None
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+        except Exception:
+            return None
     return None
 
 def cargar_datos_base() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -141,63 +143,98 @@ def cargar_datos_base() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Lis
             emp_res = cliente.table("empresas_proponentes").select("*").execute()
             lic_res = cliente.table("licitaciones_secop").select("*").order("numero_interno").execute()
             exp_res = cliente.table("experiencias_rup").select("*").execute()
-            return (emp_res.data if isinstance(emp_res.data, list) else [], 
+            return (emp_res.data if isinstance(emp_res.data, list) else [],
                     lic_res.data if isinstance(lic_res.data, list) else [],
                     exp_res.data if isinstance(exp_res.data, list) else [])
         except Exception as e:
             st.sidebar.error(f"Error de lectura: {e}")
     return [], [], []
 
+def subir_certificacion_pdf(archivo_subido, alias_empresa: str, num_contrato: str) -> str:
+    cliente = obtener_cliente_supabase()
+    if not cliente or archivo_subido is None:
+        return ""
+    try:
+        nombre_limpio = re.sub(r'[^a-zA-Z0-9_-]', '_', f"{alias_empresa}_{num_contrato}")
+        ruta_destino = f"{alias_empresa.upper()}/{nombre_limpio}_{int(datetime.datetime.now().timestamp())}.pdf"
+        cliente.storage.from_("certificaciones_rup").upload(
+            path=ruta_destino,
+            file=archivo_subido.getvalue(),
+            file_options={"content-type": "application/pdf", "upsert": "true"}
+        )
+        return cliente.storage.from_("certificaciones_rup").get_public_url(ruta_destino)
+    except Exception as e:
+        st.error(f"Error al subir PDF: {e}")
+        return ""
+
 def guardar_licitacion_seguro(payload: Dict[str, Any], modo: str = "insert", num_interno: Optional[int] = None):
     cliente = obtener_cliente_supabase()
-    if not cliente: raise Exception("No hay conexión con Supabase.")
+    if not cliente:
+        raise Exception("No hay conexión con Supabase.")
     try:
-        if modo == "insert": cliente.table("licitaciones_secop").insert(payload).execute()
-        else: cliente.table("licitaciones_secop").update(payload).eq("numero_interno", num_interno).execute()
+        if modo == "insert":
+            cliente.table("licitaciones_secop").insert(payload).execute()
+        else:
+            cliente.table("licitaciones_secop").update(payload).eq("numero_interno", num_interno).execute()
     except Exception:
         payload_compatible = dict(payload)
         for col_nueva in ["forma_pago", "iniciativas_ciudadanas", "requerimientos_especiales", "talento_humano_req"]:
             payload_compatible.pop(col_nueva, None)
-        if modo == "insert": cliente.table("licitaciones_secop").insert(payload_compatible).execute()
-        else: cliente.table("licitaciones_secop").update(payload_compatible).eq("numero_interno", num_interno).execute()
+        if modo == "insert":
+            cliente.table("licitaciones_secop").insert(payload_compatible).execute()
+        else:
+            cliente.table("licitaciones_secop").update(payload_compatible).eq("numero_interno", num_interno).execute()
 
 def formatear_miles_input(valor: Any) -> str:
-    if isinstance(valor, (int, float)): return f"$ {int(round(valor)):,}".replace(",", ".")
+    if isinstance(valor, (int, float)):
+        return f"$ {int(round(valor)):,}".replace(",", ".")
     try:
         s = str(valor).strip()
-        if "." in s and len(s.split(".")[-1]) <= 2 and s.count(".") == 1: val = float(s)
+        if "." in s and len(s.split(".")[-1]) <= 2 and s.count(".") == 1:
+            val = float(s)
         else:
             limpio = re.sub(r'[^\d]', '', s.split(',')[0])
             val = float(limpio) if limpio else 0.0
         return f"$ {int(round(val)):,}".replace(",", ".")
-    except Exception: return "$ 0"
+    except Exception:
+        return "$ 0"
 
 def limpiar_moneda_input(texto: Any) -> int:
-    if isinstance(texto, (int, float)): return int(round(float(texto)))
-    if not texto: return 0
+    if isinstance(texto, (int, float)):
+        return int(round(float(texto)))
+    if not texto:
+        return 0
     s = str(texto).strip().replace("$", "").strip()
-    if "," in s: s = s.split(",")[0]
+    if "," in s:
+        s = s.split(",")[0]
     limpio = re.sub(r'[^\d]', '', s)
-    try: return int(limpio)
-    except Exception: return 0
+    try:
+        return int(limpio)
+    except Exception:
+        return 0
 
 def limpiar_codigos_unspsc(texto_crudo: Any) -> str:
-    if texto_crudo is None: return ""
+    if texto_crudo is None:
+        return ""
     s = str(texto_crudo).replace(".0", "")
     codigos_8 = list(dict.fromkeys(re.findall(r'\b(\d{8})\b', s)))
-    if codigos_8: return "; ".join(codigos_8)
+    if codigos_8:
+        return "; ".join(codigos_8)
     codigos_6 = list(dict.fromkeys([c + "00" for c in re.findall(r'\b(\d{6})\b', s)]))
-    if codigos_6: return "; ".join(codigos_6)
+    if codigos_6:
+        return "; ".join(codigos_6)
     return ""
 
 def parsear_fecha_hora_secop(valor_str: Any) -> Tuple[Optional[datetime.date], Optional[datetime.time]]:
-    if not valor_str or str(valor_str).strip() in ["", "N/A", "None", "nan"]: return None, None
+    if not valor_str or str(valor_str).strip() in ["", "N/A", "None", "nan"]:
+        return None, None
     s = str(valor_str).strip()
     try:
         dt = datetime.datetime.fromisoformat(s.replace("Z", ""))
         hora = dt.time() if (dt.hour != 0 or dt.minute != 0) else None
         return dt.date(), hora
-    except Exception: pass
+    except Exception:
+        pass
     m = re.search(r'(\d{2})/(\d{2})/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?', s)
     if m:
         try:
@@ -205,14 +242,17 @@ def parsear_fecha_hora_secop(valor_str: Any) -> Tuple[Optional[datetime.date], O
             fecha = datetime.date(y, mo, d)
             if m.group(4) and m.group(5):
                 h, mi = int(m.group(4)), int(m.group(5))
-                if "p." in s.lower() and h < 12: h += 12
+                if "p." in s.lower() and h < 12:
+                    h += 12
                 return fecha, datetime.time(h, mi)
             return fecha, None
-        except Exception: pass
+        except Exception:
+            pass
     return None, None
 
 def parsear_fecha_hora_db(valor_str: Any) -> Tuple[Optional[datetime.date], Optional[datetime.time]]:
-    if not valor_str or str(valor_str).strip() in ["", "N/A", "None", "nan", "NULL"]: return None, None
+    if not valor_str or str(valor_str).strip() in ["", "N/A", "None", "nan", "NULL"]:
+        return None, None
     s = str(valor_str).strip()
     try:
         partes = s.split(" ")
@@ -220,10 +260,13 @@ def parsear_fecha_hora_db(valor_str: Any) -> Tuple[Optional[datetime.date], Opti
         h_obj = None
         if len(partes) > 1:
             time_str = partes[1]
-            if len(time_str.split(":")) == 3: h_obj = datetime.datetime.strptime(time_str, "%H:%M:%S").time()
-            elif len(time_str.split(":")) == 2: h_obj = datetime.datetime.strptime(time_str, "%H:%M").time()
+            if len(time_str.split(":")) == 3:
+                h_obj = datetime.datetime.strptime(time_str, "%H:%M:%S").time()
+            elif len(time_str.split(":")) == 2:
+                h_obj = datetime.datetime.strptime(time_str, "%H:%M").time()
         return f_obj, h_obj
-    except Exception: return None, None
+    except Exception:
+        return None, None
 
 def homologar_modalidad(mod_api: str) -> str:
     m = str(mod_api).lower()
@@ -259,20 +302,24 @@ def get_index_safe(lista: List[str], valor: str) -> int:
 # =====================================================================
 def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
     extra = {}
-    if not url_secop or not url_secop.startswith("http"): return extra
+    if not url_secop or not url_secop.startswith("http"):
+        return extra
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url_secop, headers=headers, timeout=12)
-        if r.status_code != 200: return extra
+        if r.status_code != 200:
+            return extra
         html = r.text
         texto_plano = re.sub(r'<[^>]+>', ' ', html)
         texto_plano = re.sub(r'\s+', ' ', texto_plano)
 
         m_dur = re.search(r'Duraci[óo]n del contrato[:\s]*(\d+)\s*\(?([A-Za-zÁÉÍÓÚáéíóú]+)\)?', texto_plano, re.IGNORECASE)
-        if m_dur: extra['tiempo'] = f"{m_dur.group(1)} {m_dur.group(2).lower()}"
+        if m_dur:
+            extra['tiempo'] = f"{m_dur.group(1)} {m_dur.group(2).lower()}"
 
         codigos_web = list(dict.fromkeys(re.findall(r'\b(\d{8})\s*-\s*', texto_plano)))
-        if codigos_web: extra['unspsc'] = "; ".join(codigos_web)
+        if codigos_web:
+            extra['unspsc'] = "; ".join(codigos_web)
 
         patrones_hitos = {
             'int': r'Manifestaci[óo]n de inter[ée]s.*?(\d{2}/\d{2}/\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s*m\.?)?)?)',
@@ -287,7 +334,8 @@ def rastrear_web_secop(url_secop: str) -> Dict[str, Any]:
                 f_dt, h_dt = parsear_fecha_hora_secop(m_f.group(1))
                 if f_dt: extra[f'f_{clave}'] = f_dt
                 if h_dt: extra[f'h_{clave}'] = h_dt
-    except Exception: pass
+    except Exception:
+        pass
     return extra
 
 def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> bool:
@@ -300,24 +348,29 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
         exp_clean = expediente.strip()
         try:
             resp = requests.get(url_api, headers=headers, params={"referencia_del_proceso": exp_clean}, timeout=10)
-            if resp.status_code == 200 and len(resp.json()) > 0: datos = resp.json()[0]
+            if resp.status_code == 200 and len(resp.json()) > 0:
+                datos = resp.json()[0]
             else:
                 resp2 = requests.get(url_api, headers=headers, params={"$where": f"upper(referencia_del_proceso) like '%{exp_clean.upper()}%'"}, timeout=10)
-                if resp2.status_code == 200 and len(resp2.json()) > 0: datos = resp2.json()[0]
-        except Exception: pass
+                if resp2.status_code == 200 and len(resp2.json()) > 0:
+                    datos = resp2.json()[0]
+        except Exception:
+            pass
 
     if datos:
         encontrado = True
         st.session_state['api_entidad'] = datos.get('entidad', '')
         obj_str = datos.get('descripci_n_del_procedimiento', datos.get('detalle_del_objeto_a_contratar', datos.get('descripcion_del_proceso', '')))
         st.session_state['api_objeto'] = obj_str
-        
+
         if any(pal in obj_str.lower() for pal in ["iniciativa ciudadana", "iniciativas ciudadanas", "presupuesto participativo", "presupuestos participativos"]):
             st.session_state['api_iniciativa'] = LISTA_INICIATIVAS[1]
-        
+
         presupuesto_str = datos.get('precio_base', datos.get('cuantia_proceso', datos.get('estimacion_del_presupuesto', 0)))
-        try: st.session_state['api_cuantia'] = formatear_miles_input(float(presupuesto_str))
-        except Exception: st.session_state['api_cuantia'] = "$ 0"
+        try:
+            st.session_state['api_cuantia'] = formatear_miles_input(float(presupuesto_str))
+        except Exception:
+            st.session_state['api_cuantia'] = "$ 0"
 
         st.session_state['api_modalidad'] = homologar_modalidad(datos.get('modalidad_de_contratacion', ''))
         st.session_state['api_etapa'] = homologar_etapa(datos.get('fase', datos.get('estado_del_procedimiento', '')))
@@ -325,15 +378,18 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
 
         dur = str(datos.get('duracion', '')).strip()
         unid = str(datos.get('unidad_de_duracion', '')).strip()
-        if dur and dur not in ['0', 'N/A', 'None']: st.session_state['api_tiempo'] = f"{dur} {unid.lower()}".strip()
+        if dur and dur not in ['0', 'N/A', 'None']:
+            st.session_state['api_tiempo'] = f"{dur} {unid.lower()}".strip()
 
         url_cruda = datos.get('urlproceso', '')
         link_api = url_cruda.get('url', '') if isinstance(url_cruda, dict) else str(url_cruda)
-        if link_api: st.session_state['api_link'] = link_api
+        if link_api:
+            st.session_state['api_link'] = link_api
 
         cod_api = datos.get('codigo_principal_de_categoria', datos.get('codigos_unspsc', ''))
         cod_limpio = limpiar_codigos_unspsc(cod_api)
-        if cod_limpio: st.session_state['api_unspsc'] = cod_limpio
+        if cod_limpio:
+            st.session_state['api_unspsc'] = cod_limpio
 
         f_rec, h_rec = parsear_fecha_hora_secop(datos.get('fecha_de_recepcion_de', datos.get('fecha_de_recepcion_de_ofertas')))
         if f_rec: st.session_state['api_f_ofe'] = f_rec
@@ -360,16 +416,17 @@ def buscar_proceso_secop_completo(expediente: str, link_manual: str = "") -> boo
     return encontrado
 
 # =====================================================================
-# 2. MOTOR MATEMÁTICO, RUP, EXPERIENCIAS Y MATRIZ MASIVA (FASE 2)
+# 2. MOTOR MATEMÁTICO, RUP, EXPERIENCIAS Y TOPES SMMLV
 # =====================================================================
 def evaluar_indicador(nombre, regla, exigido, valor_consolidado, es_porcentaje=False, es_moneda=False, indeterminado=False):
     if exigido is None or exigido == "" or float(exigido) == 0:
         return {"indicador": nombre, "regla": regla, "exigido_fmt": "N/A", "consolidado_fmt": formatear_moneda_cop(valor_consolidado) if es_moneda else formatear_indicador(valor_consolidado, es_porcentaje, indeterminado), "estado": "NO EXIGIDO"}
-    
+
     exigido_fmt = formatear_moneda_cop(exigido) if es_moneda else formatear_indicador(exigido, es_porcentaje, False)
     consolidado_fmt = formatear_moneda_cop(valor_consolidado) if es_moneda else formatear_indicador(valor_consolidado, es_porcentaje, indeterminado)
-    
-    if indeterminado or valor_consolidado is None: estado = "REVISAR"
+
+    if indeterminado or valor_consolidado is None:
+        estado = "REVISAR"
     else:
         if regla == ">=": estado = "CUMPLE" if float(valor_consolidado) >= float(exigido) else "NO CUMPLE"
         elif regla == "<=": estado = "CUMPLE" if float(valor_consolidado) <= float(exigido) else "NO CUMPLE"
@@ -392,8 +449,10 @@ def evaluar_cruce_unspsc(licitacion: Dict[str, Any], integrantes_seleccionados: 
     coincidentes = []
     faltantes = []
     for c_req in lista_req:
-        if c_req in set_rup_exacto or (c_req[:6] + "00") in set_rup_clase: coincidentes.append(c_req)
-        else: faltantes.append(c_req)
+        if c_req in set_rup_exacto or (c_req[:6] + "00") in set_rup_clase:
+            coincidentes.append(c_req)
+        else:
+            faltantes.append(c_req)
 
     cant_cumplidos = len(coincidentes)
     if not lista_req and min_exigido == 0: estado_unspsc = "NO EXIGIDO"
@@ -410,19 +469,45 @@ def evaluar_cruce_unspsc(licitacion: Dict[str, Any], integrantes_seleccionados: 
         "estado_unspsc": estado_unspsc
     }
 
-def evaluar_experiencia_proponente(licitacion: Dict[str, Any], alias_empresa: str, lista_experiencias: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Evalúa los contratos registrados en la tabla experiencias_rup frente a los requisitos del pliego (Punto 11)."""
+def evaluar_experiencia_proponente(alias_empresa: str, lista_experiencias: List[Dict[str, Any]]) -> Dict[str, Any]:
     exps_empresa = [ex for ex in lista_experiencias if str(ex.get("alias_empresa", "")).strip().upper() == str(alias_empresa).strip().upper()]
-    
-    # Análisis de Experiencia General y Específica
     total_smmlv = sum([float(ex.get("valor_smmlv", 0) or 0) for ex in exps_empresa])
-    total_contratos = len(exps_empresa)
-    
     return {
-        "total_contratos": total_contratos,
+        "total_contratos": len(exps_empresa),
         "total_smmlv": total_smmlv,
-        "detalle": exps_empresa,
-        "estado_experiencia": "CUMPLE" if total_contratos > 0 else "REVISAR"
+        "detalle": exps_empresa
+    }
+
+def evaluar_topes_smmlv(experiencias_integrantes: List[Dict[str, Any]], tipo_regla: str, n_contratos: int, smmlv_exigidos: float) -> Dict[str, Any]:
+    exps_ordenadas = sorted(experiencias_integrantes, key=lambda x: float(x.get("valor_smmlv", 0) or 0), reverse=True)
+    total_disponibles = len(exps_ordenadas)
+
+    if tipo_regla == "Máximo / Hasta N contratos":
+        seleccionados = exps_ordenadas[:n_contratos]
+        cumple_cantidad = len(seleccionados) > 0
+    elif tipo_regla == "Exactamente N contratos":
+        seleccionados = exps_ordenadas[:n_contratos]
+        cumple_cantidad = total_disponibles >= n_contratos
+    else:  # "Mínimo N contratos"
+        seleccionados = exps_ordenadas
+        cumple_cantidad = total_disponibles >= n_contratos
+
+    suma_smmlv = sum(float(c.get("valor_smmlv", 0) or 0) for c in seleccionados)
+    cumple_smmlv = suma_smmlv >= smmlv_exigidos
+    faltante_smmlv = max(0.0, smmlv_exigidos - suma_smmlv)
+
+    if cumple_cantidad and cumple_smmlv:
+        veredicto = "✅ CUMPLE EXPERIENCIA"
+    elif not cumple_cantidad:
+        veredicto = f"❌ NO CUMPLE CANTIDAD (Tiene {total_disponibles}, exige {n_contratos})"
+    else:
+        veredicto = f"❌ NO CUMPLE SMMLV (Faltan {faltante_smmlv:,.1f} SMMLV)"
+
+    return {
+        "veredicto": veredicto,
+        "seleccionados": seleccionados,
+        "suma_smmlv": suma_smmlv,
+        "faltante_smmlv": faltante_smmlv
     }
 
 def consolidar_proponente_plural(licitacion, integrantes_seleccionados, experiencias_db, tipo_figura="UNION_TEMPORAL"):
@@ -437,14 +522,14 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, experien
         uo_cons += float(emp.get("utilidad_operacional", 0.0)) * peso
         gi_cons += float(emp.get("gastos_intereses", 0.0)) * peso
         ct_cons += float(emp.get("capital_trabajo", 0.0))
-    
+
     liq = (ac_cons / pc_cons) if pc_cons > 0 else None
     end = (pt_cons / at_cons) if at_cons > 0 else None
     cob_ind = (gi_cons == 0)
     cob = (uo_cons / gi_cons) if not cob_ind else None
     rp = (uo_cons / pat_cons) if pat_cons > 0 else None
     ra = (uo_cons / at_cons) if at_cons > 0 else None
-    
+
     comparativo = [
         evaluar_indicador("Liquidez", ">=", licitacion.get("req_liquidez_min"), liq),
         evaluar_indicador("Endeudamiento", "<=", licitacion.get("req_endeudamiento_max"), end, es_porcentaje=True),
@@ -455,14 +540,16 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, experien
     ]
     estados = [item["estado"] for item in comparativo if item["estado"] != "NO EXIGIDO"]
     estado_global = "NO CUMPLE" if "NO CUMPLE" in estados else "REVISAR" if "REVISAR" in estados else "CUMPLE"
-    
+
     cruce_unspsc = evaluar_cruce_unspsc(licitacion, integrantes_seleccionados)
-    
-    # Evaluación de experiencia por integrante
+
     eval_exp_integrantes = {}
+    todas_exps_proponente = []
     for emp in integrantes_seleccionados:
         alias = emp.get("alias_codigo", "")
-        eval_exp_integrantes[alias] = evaluar_experiencia_proponente(licitacion, alias, experiencias_db)
+        ev = evaluar_experiencia_proponente(alias, experiencias_db)
+        eval_exp_integrantes[alias] = ev
+        todas_exps_proponente.extend(ev["detalle"])
 
     return {
         "tipo_figura": tipo_figura,
@@ -470,7 +557,8 @@ def consolidar_proponente_plural(licitacion, integrantes_seleccionados, experien
         "estado_global": estado_global,
         "cruce_unspsc": cruce_unspsc,
         "codigos_cumplidos": cruce_unspsc["codigos_cumplidos"],
-        "eval_exp_integrantes": eval_exp_integrantes
+        "eval_exp_integrantes": eval_exp_integrantes,
+        "todas_exps_proponente": todas_exps_proponente
     }
 
 def generar_matriz_todas_empresas(licitacion: Dict[str, Any], empresas: List[Dict[str, Any]], experiencias_db: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -480,16 +568,15 @@ def generar_matriz_todas_empresas(licitacion: Dict[str, Any], empresas: List[Dic
         emp_copy["porcentaje_participacion"] = 100.0
         res = consolidar_proponente_plural(licitacion, [emp_copy], experiencias_db, "INDIVIDUAL")
         cruce = res["cruce_unspsc"]
-        
+
         fallas = [item["indicador"] for item in res["comparativo_indicadores"] if item["estado"] == "NO CUMPLE"]
         mapa_ind = {item["indicador"]: item["consolidado_fmt"] for item in res["comparativo_indicadores"]}
-        
-        # Validación de contratos de experiencia de esta empresa
+
         exps_emp = [ex for ex in experiencias_db if str(ex.get("alias_empresa", "")).strip().upper() == str(emp.get("alias_codigo", "")).strip().upper()]
         tot_smmlv_emp = sum([float(ex.get("valor_smmlv", 0) or 0) for ex in exps_emp])
-        
+
         viabilidad_total = "✅ VIABLE INDIVIDUAL" if (res["estado_global"] == "CUMPLE" and cruce["estado_unspsc"] in ["CUMPLE", "NO EXIGIDO"]) else ("🤝 CANDIDATA PARA UT" if res["estado_global"] != "NO CUMPLE" or cruce["codigos_cumplidos"] > 0 else "❌ NO CUMPLE")
-        
+
         filas.append({
             "Alias": emp.get("alias_codigo", "S/N"),
             "Razón Social": emp.get("razon_social", "S/N"),
@@ -507,7 +594,7 @@ def generar_pdf_tablero_empresas(licitacion: Dict[str, Any], filas_matriz: List[
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
     styles = getSampleStyleSheet()
-    
+
     estilo_titulo = ParagraphStyle('TituloTablero', parent=styles['Heading1'], fontSize=14, textColor=colors.HexColor("#1B365D"), spaceAfter=6)
     estilo_sub = ParagraphStyle('SubTablero', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor("#333333"), spaceAfter=10)
     estilo_celda = ParagraphStyle('CeldaTablero', parent=styles['Normal'], fontSize=7.5, leading=9)
@@ -517,14 +604,14 @@ def generar_pdf_tablero_empresas(licitacion: Dict[str, Any], filas_matriz: List[
     num_proc = licitacion.get("numero_proceso", "S/N")
     entidad = licitacion.get("entidad", "S/N")
     cuantia = formatear_moneda_cop(licitacion.get("cuantia_presupuesto", 0))
-    
+
     story.append(Paragraph(f"TABLERO EJECUTIVO DE VIABILIDAD POR EMPRESA — PROCESO {num_proc}", estilo_titulo))
     story.append(Paragraph(f"<b>Entidad:</b> {entidad} | <b>Presupuesto Oficial:</b> {cuantia} | <b>Mín. UNSPSC exigidos:</b> {licitacion.get('cant_codigos_unspsc_req', 0)}", estilo_sub))
     story.append(Spacer(1, 6))
 
     encabezados = ["Alias", "Razón Social", "Dictamen General", "Financiero", "UNSPSC", "Contratos", "Total SMMLV", "Liquidez", "Indicadores que Fallan"]
     data_tabla = [[Paragraph(h, estilo_header) for h in encabezados]]
-    
+
     for f in filas_matriz:
         data_tabla.append([
             Paragraph(str(f["Alias"]), estilo_celda),
@@ -564,9 +651,11 @@ def selector_fecha_hora_seguro(etiqueta: str, val_fecha: Any, val_hora: Any, cla
     return f_sel, h_sel
 
 def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[datetime.time] = None) -> Optional[str]:
-    if not fecha_obj: return None
+    if not fecha_obj:
+        return None
     f_str = fecha_obj.strftime("%Y-%m-%d")
-    if hora_obj: return f"{f_str} {hora_obj.strftime('%H:%M:%S')}"
+    if hora_obj:
+        return f"{f_str} {hora_obj.strftime('%H:%M:%S')}"
     return f_str
 
 # =====================================================================
@@ -574,7 +663,7 @@ def formatear_fecha_db(fecha_obj: Optional[datetime.date], hora_obj: Optional[da
 # =====================================================================
 def main():
     st.set_page_config(page_title="Zekia Bidding", page_icon="⚖️", layout="wide")
-    
+
     if 'usuario_actual' not in st.session_state:
         st.session_state['usuario_actual'] = None
         st.session_state['rol_usuario'] = None
@@ -591,16 +680,17 @@ def main():
                     st.session_state['usuario_actual'] = user_data['username']
                     st.session_state['rol_usuario'] = user_data['rol']
                     st.rerun()
-                else: st.error("❌ Credenciales incorrectas o base de datos en pausa.")
+                else:
+                    st.error("❌ Credenciales incorrectas o base de datos en pausa.")
         return
 
     st.title("⚖️ Centro de Comando SECOP II — ASESOL / ZEKIA")
-    
+
     empresas, licitaciones, experiencias_db = cargar_datos_base()
     licitaciones_validas = [lic for lic in licitaciones if isinstance(lic, dict)]
     empresas_validas = [emp for emp in empresas if isinstance(emp, dict)]
     es_admin = st.session_state['rol_usuario'] in ["Administrador", "Editor"]
-    
+
     # ------------------ RADAR DE ALERTAS INTELIGENTES ------------------
     alertas_criticas = []
     alertas_medias = []
@@ -609,7 +699,7 @@ def main():
     for lic in licitaciones_validas:
         estado_rev = str(lic.get("estado_revision", ""))
         num_proc = str(lic.get("numero_proceso", "S/N"))
-        
+
         f_oferta_raw = lic.get("fecha_presentacion_oferta")
         if f_oferta_raw and f_oferta_raw != "N/A":
             partes_f = str(f_oferta_raw).split(" ")
@@ -619,22 +709,26 @@ def main():
                 f_oferta_dt = datetime.datetime.strptime(f_solo, "%Y-%m-%d").date()
                 dias_restantes = (f_oferta_dt - hoy).days
                 if estado_rev not in ["Presentada", "Inviable", "Seleccionada", "Desierto"]:
-                    if 0 <= dias_restantes <= 3: alertas_criticas.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo} {h_solo}).")
-                    elif 4 <= dias_restantes <= 7: alertas_medias.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo} {h_solo}).")
-            except Exception: pass
-            
+                    if 0 <= dias_restantes <= 3:
+                        alertas_criticas.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo} {h_solo}).")
+                    elif 4 <= dias_restantes <= 7:
+                        alertas_medias.append(f"**{num_proc}**: Cierra en **{dias_restantes} días** ({f_solo} {h_solo}).")
+            except Exception:
+                pass
+
         est_pol = str(lic.get("estado_poliza", ""))
         if est_pol in ["Pendiente", "Solicitada"] and estado_rev in ["Alistamiento", "Viable", "Presentacion"]:
             alertas_medias.append(f"**{num_proc}**: Atención, Póliza en estado '{est_pol}'.")
 
     with st.expander("🔔 Radar de Vencimientos y Alertas (Próximos 7 días)", expanded=bool(alertas_criticas or alertas_medias)):
-        if not alertas_criticas and not alertas_medias: st.success("✅ Todo bajo control.")
+        if not alertas_criticas and not alertas_medias:
+            st.success("✅ Todo bajo control.")
         else:
             for alerta in alertas_criticas: st.error(f"🚨 {alerta}")
             for alerta in alertas_medias: st.warning(f"⚠️ {alerta}")
 
     # =====================================================================
-    # BARRA LATERAL (REGISTRO, ADENDAS, EMPRESAS Y EXPERIENCIAS RUP)
+    # BARRA LATERAL (REGISTRO, ADENDAS, EMPRESAS Y EXPERIENCIAS RUP + PDF)
     # =====================================================================
     with st.sidebar:
         st.markdown(f"👤 **{st.session_state['usuario_actual']}** | Rol: *{st.session_state['rol_usuario']}*")
@@ -642,43 +736,43 @@ def main():
             st.session_state['usuario_actual'] = None
             st.session_state['rol_usuario'] = None
             st.rerun()
-            
+
         st.divider()
 
         if es_admin:
-            # =======================================================
             # MÓDULO 1: BUSCADOR Y CREADOR DE PROCESOS
-            # =======================================================
             with st.expander("➕ Buscar y Registrar Nuevo Proceso", expanded=False):
                 exp_buscar = st.text_input("Expediente (Ej. FDLSC-LP-006-2026)")
                 link_rastreo = st.text_input("Opcional: Link directo SECOP II", value=st.session_state.get('api_link', ''))
-                
+
                 if st.button("🔍 Buscar API y Rastrear Web", use_container_width=True):
                     if exp_buscar or link_rastreo:
-                        if buscar_proceso_secop_completo(exp_buscar, link_rastreo): st.success("✅ Datos extraídos.")
-                        else: st.warning("⚠️ No indexado en API. Diligencia manual.")
-                
+                        if buscar_proceso_secop_completo(exp_buscar, link_rastreo):
+                            st.success("✅ Datos extraídos.")
+                        else:
+                            st.warning("⚠️ No indexado en API. Diligencia manual.")
+
                 with st.form("form_guardar_proceso", clear_on_submit=True):
                     st.caption("Diligencia las 12 secciones")
                     t1, t2, t3, t4 = st.tabs(["01-02", "03-05", "06-08", "09-12"])
-                    
+
                     with t1:
                         st.write("**01 BÁSICOS**")
                         num_interno = st.number_input("Nº Interno", value=len(licitaciones) + 1, min_value=1, key="num_interno_c")
                         num_proceso = st.text_input("Nº Proceso", value=exp_buscar, key="num_proceso_c")
                         entidad = st.text_input("Entidad", value=st.session_state.get('api_entidad', ''), key="entidad_c")
                         objeto = st.text_area("Objeto", value=st.session_state.get('api_objeto', ''), key="objeto_c")
-                        
+
                         modalidad = st.selectbox("Modalidad", LISTA_MODALIDADES, index=get_index_safe(LISTA_MODALIDADES, st.session_state.get('api_modalidad', '')), key="modalidad_c")
                         cuantia_txt = st.text_input("Presupuesto Oficial (COP)", value=st.session_state.get('api_cuantia', "$ 0"), key="cuantia_c")
                         forma_pago = st.text_input("Forma de Pago", value="Mensualidades vencidas / Pagos parciales según avance", key="fpago_c")
                         iniciativas = st.selectbox("¿Iniciativas Ciudadanas?", LISTA_INICIATIVAS, index=get_index_safe(LISTA_INICIATIVAS, st.session_state.get('api_iniciativa', '')), key="inic_c")
-                        
+
                         etapa = st.selectbox("Etapa Actual", LISTA_ETAPAS, index=get_index_safe(LISTA_ETAPAS, st.session_state.get('api_etapa', 'Ofertas')), key="etapa_c")
                         estado = st.selectbox("Estado Revisión", LISTA_ESTADOS_REVISION, index=0, key="estado_c")
                         lugar = st.text_input("Lugar Ejecución", value=st.session_state.get('api_lugar', "Bogotá D.C."), key="lugar_c")
                         tiempo = st.text_input("Tiempo Ejecución", value=st.session_state.get('api_tiempo', "N/A"), key="tiempo_c")
-                        
+
                         st.write("**02 CRONOGRAMA CON HORA**")
                         f_int, h_int = selector_fecha_hora_seguro("📅 Manifestación Interés", st.session_state.get('api_f_int', None), datetime.time(17, 0), "int_c")
                         f_sor, h_sor = selector_fecha_hora_seguro("📅 Fecha Sorteo", st.session_state.get('api_f_sor', None), datetime.time(10, 0), "sor_c")
@@ -692,7 +786,7 @@ def main():
                         unspsc_input = st.text_area("Códigos UNSPSC", value=st.session_state.get('api_unspsc', ''), height=100, key="unspsc_c")
                         cant_u = st.number_input("CANT. COD. REQ (Mínimo exigido)", value=0, min_value=0, key="cant_u_c")
                         estampillas = st.text_area("Estampillas / Descuentos", value="N/A", key="estampillas_c")
-                        
+
                         st.write("**05 FINANCIEROS (Pliego)**")
                         r_liq = st.number_input("Liquidez (>=)", value=0.0, step=0.1, key="r_liq_c")
                         r_end = st.number_input("Endeudamiento (<=)", value=0.0, step=0.05, key="r_end_c")
@@ -700,21 +794,21 @@ def main():
                         r_cap_txt = st.text_input("Capital Trabajo Exigido ($ COP)", value="$ 0", key="r_cap_c")
                         r_rpat = st.number_input("Rent. Patrimonio (>=)", value=0.0, step=0.05, key="r_rpat_c")
                         r_ract = st.number_input("Rent. Activo (>=)", value=0.0, step=0.05, key="r_ract_c")
-                    
+
                     with t3:
                         st.write("**06 RESUMEN, REQUISITOS Y TALENTO HUMANO**")
                         resumen = st.text_area("Resumen y Actividades", value="N/A", key="resumen_c")
                         req_esp_sel = st.multiselect("Certificados Específicos", options=LISTA_REQ_ESPECIALES, key="req_esp_c")
                         carreras_sel = st.multiselect("Profesiones Talento Humano", options=list(MAPA_PROFESIONES_TP.keys()), key="carreras_c")
                         detalle_th = st.text_area("Detalle Talento Humano", value="N/A", key="th_det_c")
-                        
+
                         st.write("**07 EXPERIENCIA**")
                         eg_cont = st.text_input("Exp. General Contratos (Ej. Máximo 2 contratos)", value="N/A", key="eg_cont_c")
                         eg_desc = st.text_area("Desc. Exp. General", value="N/A", key="eg_desc_c")
                         ee_cont = st.text_input("Exp. Específica Contratos", value="N/A", key="ee_cont_c")
                         ee_desc = st.text_area("Desc. Exp. Específica", value="N/A", key="ee_desc_c")
                         reg_emp = st.text_area("Emprendimientos / Mujeres / Mipyme", value="N/A", key="reg_emp_c")
-                        
+
                         st.write("**08 EVALUACIÓN MÉTODOS**")
                         met_eco_sel = st.multiselect("Métodos de Oferta Económica", options=LISTA_METODOS_ECONOMICOS, key="met_eco_c")
                         fac_tec = st.text_area("Factores Técnicos", value="N/A", key="fac_tec_c")
@@ -728,12 +822,12 @@ def main():
                         pt_m = st.number_input("Mipyme", value=0.0, step=0.25, key="pt_m_c")
                         pt_mu = st.number_input("Mujeres", value=0.0, step=0.25, key="pt_mu_c")
                         pt_tot = st.number_input("Total Puntos", value=100.0, step=0.5, key="pt_tot_c")
-                        
+
                         st.write("**10 RESPONSABLE | 11 LINK**")
                         responsable = st.selectbox("Responsable", options=LISTA_RESPONSABLES, index=0, key="responsable_c")
                         obs_fin = st.text_area("Observaciones", value="N/A", key="obs_fin_c")
                         link_secop = st.text_input("Link SECOP II", value=st.session_state.get('api_link', link_rastreo), key="link_c")
-                        
+
                         st.write("**12 GARANTÍAS**")
                         pol_tipo = st.selectbox("¿Exige Póliza?", options=LISTA_POLIZA, index=0, key="pol_tipo_c")
                         pol_ser = st.text_input("Póliza Seriedad", value="N/A", key="pol_ser_c")
@@ -746,7 +840,7 @@ def main():
                             lineas_tp = [f"• {c}: {MAPA_PROFESIONES_TP[c]}" for c in carreras_sel]
                             bloque_th = ("\n".join(lineas_tp) + (f"\nDetalle: {detalle_th}" if detalle_th != "N/A" else "")) if lineas_tp else detalle_th
                             req_esp_str = "; ".join(req_esp_sel) if req_esp_sel else "Ninguno específico"
-                            
+
                             resumen_enriquecido = f"{resumen}\n\n• Forma de Pago: {forma_pago}\n• Iniciativas Ciudadanas: {iniciativas}\n• Certificados: {req_esp_str}\n• Talento Humano:\n{bloque_th}"
 
                             nueva_lic = {
@@ -776,12 +870,11 @@ def main():
                                     if k.startswith('api_'): del st.session_state[k]
                                 st.success("✅ ¡Proceso registrado con éxito!")
                                 st.rerun()
-                            except Exception as e: st.error(f"Error al guardar: {e}")
+                            except Exception as e:
+                                st.error(f"Error al guardar: {e}")
 
-            # =======================================================
-            # MÓDULO 2: REGISTRAR EXPERIENCIAS RUP CONTRATO POR CONTRATO (FASE 2)
-            # =======================================================
-            with st.expander("📁 Registrar Experiencia RUP (Contrato)", expanded=False):
+            # MÓDULO 2: REGISTRAR EXPERIENCIAS RUP + CERTIFICACIÓN PDF (FASE 2)
+            with st.expander("📁 Registrar Experiencia RUP (Contrato + PDF)", expanded=False):
                 if not empresas_validas:
                     st.warning("Primero debes registrar una empresa en el Directorio RUP.")
                 else:
@@ -798,9 +891,11 @@ def main():
                         f_fin = st.date_input("Fecha Finalización", value=datetime.date(2023, 12, 31), key="exp_ffin_reg")
                         anio_fin = st.number_input("Año de Finalización", value=2023, min_value=2000, max_value=2030, key="exp_anio_reg")
                         unspsc_exp = st.text_area("Códigos UNSPSC del Contrato", placeholder="86101600; 86111500...", key="exp_unspsc_reg")
-                        
-                        if st.form_submit_button("💾 Guardar Contrato en RUP", type="primary"):
+                        pdf_cert = st.file_uploader("📄 Adjuntar Certificación / Acta de Liquidación (PDF)", type=["pdf"], key="exp_pdf_reg")
+
+                        if st.form_submit_button("💾 Guardar Contrato y PDF en RUP", type="primary"):
                             if entidad_cont and num_cont:
+                                url_pdf = subir_certificacion_pdf(pdf_cert, mapa_aliases[alias_emp_sel], num_cont.strip()) if pdf_cert else ""
                                 datos_exp = {
                                     "alias_empresa": mapa_aliases[alias_emp_sel],
                                     "entidad_contratante": entidad_cont.strip(),
@@ -812,24 +907,25 @@ def main():
                                     "fecha_inicio": f_inicio.strftime("%Y-%m-%d"),
                                     "fecha_fin": f_fin.strftime("%Y-%m-%d"),
                                     "anio_finalizacion": int(anio_fin),
-                                    "codigos_unspsc_contrato": limpiar_codigos_unspsc(unspsc_exp) or "N/A"
+                                    "codigos_unspsc_contrato": limpiar_codigos_unspsc(unspsc_exp) or "N/A",
+                                    "url_certificacion": url_pdf
                                 }
                                 try:
                                     obtener_cliente_supabase().table("experiencias_rup").insert(datos_exp).execute()
-                                    st.success("✅ ¡Contrato de experiencia guardado con éxito!")
+                                    st.success("✅ ¡Contrato y certificación guardados con éxito!")
                                     st.rerun()
-                                except Exception as e: st.error(f"Error al guardar experiencia: {e}")
+                                except Exception as e:
+                                    st.error(f"Error al guardar experiencia: {e}")
 
-            # =======================================================
             # MÓDULO 3: MODIFICAR PROCESO EXISTENTE (ADENDAS)
-            # =======================================================
             with st.expander("✏️ Modificar Proceso Existente (Adendas)", expanded=False):
-                if not licitaciones_validas: st.warning("No hay procesos.")
+                if not licitaciones_validas:
+                    st.warning("No hay procesos.")
                 else:
                     opciones_editar = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')}": lic for lic in licitaciones_validas}
                     proc_edit_label = st.selectbox("Selecciona el proceso a modificar:", list(opciones_editar.keys()), key="sel_proc_edit")
                     p_ed = opciones_editar[proc_edit_label]
-                    
+
                     with st.form("form_editar_proceso", clear_on_submit=False):
                         st.caption("Modifica y presiona Actualizar.")
                         e1, e2, e3, e4 = st.tabs(["01-02", "03-05", "06-08", "09-12"])
@@ -846,14 +942,14 @@ def main():
                             estado_e = st.selectbox("Estado Revisión", LISTA_ESTADOS_REVISION, index=get_index_safe(LISTA_ESTADOS_REVISION, p_ed.get('estado_revision', '')), key="estado_e")
                             lugar_e = st.text_input("Lugar Ejecución", value=str(p_ed.get('lugar_ejecucion', '')), key="lugar_e")
                             tiempo_e = st.text_input("Tiempo Ejecución", value=str(p_ed.get('tiempo_ejecucion', '')), key="tiempo_e")
-                            
+
                             f_int_dt, h_int_dt = parsear_fecha_hora_db(p_ed.get('fecha_manifestacion_interes'))
                             f_sor_dt, h_sor_dt = parsear_fecha_hora_db(p_ed.get('fecha_sorteo'))
                             f_mip_dt, h_mip_dt = parsear_fecha_hora_db(p_ed.get('fecha_limitacion_mipyme'))
                             f_obsp_dt, h_obsp_dt = parsear_fecha_hora_db(p_ed.get('fecha_obs_prepliego'))
                             f_obsd_dt, h_obsd_dt = parsear_fecha_hora_db(p_ed.get('fecha_obs_pliego_def'))
                             f_ofe_dt, h_ofe_dt = parsear_fecha_hora_db(p_ed.get('fecha_presentacion_oferta'))
-                            
+
                             f_int_e, h_int_e = selector_fecha_hora_seguro("📅 Manifestación Interés", f_int_dt, h_int_dt or datetime.time(17, 0), "int_e")
                             f_sor_e, h_sor_e = selector_fecha_hora_seguro("📅 Fecha Sorteo", f_sor_dt, h_sor_dt or datetime.time(10, 0), "sor_e")
                             f_mip_e, h_mip_e = selector_fecha_hora_seguro("📅 Límite Mipyme", f_mip_dt, h_mip_dt or datetime.time(17, 0), "mip_e")
@@ -925,11 +1021,10 @@ def main():
                                     guardar_licitacion_seguro(dict_actualizado, modo="update", num_interno=num_interno_e)
                                     st.success("✅ ¡Proceso actualizado con éxito!")
                                     st.rerun()
-                                except Exception as e: st.error(f"Error al actualizar: {e}")
+                                except Exception as e:
+                                    st.error(f"Error al actualizar: {e}")
 
-            # =======================================================
             # MÓDULO 4: REGISTRAR EMPRESA (RUP)
-            # =======================================================
             with st.expander("🏢 Registrar Nueva Empresa (RUP)"):
                 with st.form("form_nueva_empresa", clear_on_submit=True):
                     alias = st.text_input("Alias (Ej. ZEKIA)")
@@ -940,7 +1035,7 @@ def main():
                     pat, uo = st.number_input("Patrimonio", value=0.0, step=1000000.0), st.number_input("Utilidad Op.", value=0.0, step=1000000.0)
                     gi, ct = st.number_input("Gastos Int.", value=0.0, step=1000000.0), st.number_input("Cap. Trabajo", value=0.0, step=1000000.0)
                     unspsc_rup_raw = st.text_area("Códigos UNSPSC en RUP", height=100, placeholder="86101600; 86111500...")
-                    
+
                     if st.form_submit_button("💾 Guardar Empresa", type="primary"):
                         if alias and nit:
                             datos_emp = {
@@ -959,7 +1054,8 @@ def main():
                                     cliente.table("empresas_proponentes").insert(datos_emp).execute()
                                     st.success(f"✅ Empresa {alias.upper()} registrada.")
                                 st.rerun()
-                            except Exception as e: st.error(f"Error al guardar empresa: {e}")
+                            except Exception as e:
+                                st.error(f"Error al guardar empresa: {e}")
         else:
             st.info("ℹ️ **Modo Lectura Activo**")
 
@@ -974,7 +1070,8 @@ def main():
 
     # ------------------ PESTAÑA 1: EVALUADOR Y MATRIZ MASIVA ------------------
     with tab_eval:
-        if not licitaciones_validas: st.warning("⚠️ No hay licitaciones registradas.")
+        if not licitaciones_validas:
+            st.warning("⚠️ No hay licitaciones registradas.")
         else:
             st.header("1. Selección del Proceso SECOP II")
             opciones_lic = {f"#{lic.get('numero_interno', 0)} | {lic.get('numero_proceso', 'S/N')} — {lic.get('entidad', '')[:45]}": lic for lic in licitaciones_validas}
@@ -995,18 +1092,19 @@ def main():
                             file_name=f"Tablero_Empresas_{licitacion_actual.get('numero_proceso', 'Proceso')}.pdf",
                             mime="application/pdf"
                         )
-                    except Exception as e: st.error(f"Error PDF: {e}")
+                    except Exception as e:
+                        st.error(f"Error PDF: {e}")
 
             st.divider()
             st.header("2. Simulación Detallada por Proponente (Individual o UT)")
             tipo_figura = st.radio("Modalidad de Participación:", ["INDIVIDUAL", "UNION_TEMPORAL"], horizontal=True)
             mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
-            
+
             if tipo_figura == "INDIVIDUAL":
                 empresas_elegidas = [st.selectbox("Empresa (RUP):", list(mapa_empresas.keys()))] if mapa_empresas else []
             else:
                 empresas_elegidas = st.multiselect("Integrantes UT:", list(mapa_empresas.keys()), default=[list(mapa_empresas.keys())[0]] if mapa_empresas else [])
-                
+
             nombre_proponente = st.text_input("Nombre Organización / UT:", value=f"UT {' + '.join(empresas_elegidas)}" if tipo_figura != "INDIVIDUAL" else (empresas_elegidas[0] if empresas_elegidas else ""))
 
             if empresas_elegidas:
@@ -1020,7 +1118,7 @@ def main():
                     integrantes_simulacion.append(emp_copy)
 
                 resultado_sim = consolidar_proponente_plural(licitacion_actual, integrantes_simulacion, experiencias_db, tipo_figura)
-                
+
                 cruce_u = resultado_sim["cruce_unspsc"]
                 st.subheader("🏷️ Cruce Detallado de Clasificación UNSPSC (Pliego vs. RUP)")
                 col_u1, col_u2, col_u3, col_u4 = st.columns(4)
@@ -1028,7 +1126,7 @@ def main():
                 col_u2.metric("Mín. Exigido", cruce_u["min_exigido"])
                 col_u3.metric("Cumplidos RUP", cruce_u["codigos_cumplidos"])
                 col_u4.metric("Estado UNSPSC", cruce_u["estado_unspsc"])
-                
+
                 c_l1, c_l2, c_l3 = st.columns(3)
                 with c_l1:
                     st.markdown(f"**📋 Solicitados ({cruce_u['total_publicados']}):**")
@@ -1040,16 +1138,36 @@ def main():
                     st.markdown(f"**❌ Faltantes ({len(cruce_u['faltantes'])}):**")
                     st.error("; ".join(cruce_u["faltantes"]) if cruce_u["faltantes"] else "Ninguno")
 
-                # Auditoría de Experiencia por Contrato (Fase 2)
-                st.subheader("📁 Auditoría de Experiencia RUP y SMMLV")
-                for alias_int, ev_exp in resultado_sim["eval_exp_integrantes"].items():
-                    st.markdown(f"**Empresa Integrante: `{alias_int}`** — Total contratos: **{ev_exp['total_contratos']}** | Sumatoria RUP: **{ev_exp['total_smmlv']:,.1f} SMMLV**")
-                    if ev_exp["detalle"]:
-                        df_exps_int = pd.DataFrame(ev_exp["detalle"])[["numero_contrato", "entidad_contratante", "objeto_contrato", "valor_smmlv", "anio_finalizacion"]]
-                        df_exps_int.columns = ["Nº Contrato", "Entidad", "Objeto", "Valor SMMLV", "Año Fin"]
-                        st.dataframe(df_exps_int, use_container_width=True, hide_index=True)
-                    else:
-                        st.caption("⚠️ No registra contratos de experiencia asociados en el RUP de la plataforma. Regístrelos en la barra lateral.")
+                # EVALUADOR INTELIGENTE DE TOPES Y SMMLV (FASE 2 COMPLETA)
+                st.subheader("📁 Evaluador Inteligente de Experiencia RUP y Topes en SMMLV")
+                c_ex1, c_ex2, c_ex3 = st.columns(3)
+                regla_exp = c_ex1.selectbox("Regla de Contratos del Pliego:", ["Máximo / Hasta N contratos", "Exactamente N contratos", "Mínimo N contratos"])
+                n_cont_req = c_ex2.number_input("Número de Contratos (N):", min_value=1, value=2, step=1)
+                smmlv_req = c_ex3.number_input("SMMLV Exigidos por el Pliego:", min_value=0.0, value=100.0, step=10.0)
+
+                eval_topes = evaluar_topes_smmlv(resultado_sim["todas_exps_proponente"], regla_exp, int(n_cont_req), float(smmlv_req))
+
+                if "✅" in eval_topes["veredicto"]:
+                    st.success(f"**{eval_topes['veredicto']}** — Sumatoria con los mejores contratos seleccionados: **{eval_topes['suma_smmlv']:,.1f} SMMLV**")
+                else:
+                    st.error(f"**{eval_topes['veredicto']}** — Sumatoria actual: **{eval_topes['suma_smmlv']:,.1f} SMMLV**")
+
+                if eval_topes["seleccionados"]:
+                    st.caption("Contratos seleccionados automáticamente por mayor valor en SMMLV:")
+                    df_sel = pd.DataFrame(eval_topes["seleccionados"])
+                    cols_sel = [c for c in ["alias_empresa", "numero_contrato", "entidad_contratante", "objeto_contrato", "valor_smmlv", "anio_finalizacion", "url_certificacion"] if c in df_sel.columns]
+                    df_sel = df_sel[cols_sel].rename(columns={
+                        "alias_empresa": "Empresa", "numero_contrato": "Nº Contrato", "entidad_contratante": "Entidad",
+                        "objeto_contrato": "Objeto", "valor_smmlv": "Valor SMMLV", "anio_finalizacion": "Año Fin", "url_certificacion": "Certificación PDF"
+                    })
+                    st.dataframe(
+                        df_sel,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={"Certificación PDF": st.column_config.LinkColumn("Certificación PDF", display_text="📄 Ver PDF")}
+                    )
+                else:
+                    st.info("No hay contratos registrados en el RUP para los integrantes seleccionados. Regístralos en la barra lateral.")
 
                 st.subheader("📊 Consolidado Financiero")
                 df_comp = pd.DataFrame([{"Indicador": item["indicador"], "Regla": item["regla"], "Exigido": item["exigido_fmt"], "Capacidad": item["consolidado_fmt"], "Estado": item["estado"]} for item in resultado_sim["comparativo_indicadores"]])
@@ -1063,25 +1181,25 @@ def main():
                     retefuente_pct = c_d2.number_input("Retefuente (%)", value=4.0, step=0.5)
                     reteica_pct = c_d3.number_input("ReteICA (%)", value=0.966, step=0.1)
                     estampillas_pct = c_d4.number_input("Estampillas (%)", value=4.1, step=0.5)
-                    
+
                     subtotal_sin_iva = presupuesto_base / (1 + (iva_pct / 100.0)) if iva_pct > 0 else presupuesto_base
                     valor_descuentos = subtotal_sin_iva * ((retefuente_pct + reteica_pct + estampillas_pct) / 100.0)
                     costo_poliza_est = float(licitacion_actual.get('vr_poliza', 0) or 0)
                     saldo_real_ejecucion = subtotal_sin_iva - valor_descuentos - costo_poliza_est
-                    
+
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("Presupuesto Oficial", formatear_moneda_cop(presupuesto_base))
                     m2.metric("Base sin IVA", formatear_moneda_cop(subtotal_sin_iva))
                     m3.metric("Descuentos Est.", formatear_moneda_cop(valor_descuentos))
                     m4.metric("💰 Saldo Real", formatear_moneda_cop(saldo_real_ejecucion))
-                    
+
                     resumen_tributario_pdf = f"Simulación Financiera: Base sin IVA {formatear_moneda_cop(subtotal_sin_iva)} - Descuentos ({formatear_moneda_cop(valor_descuentos)}) = SALDO NETO REAL: {formatear_moneda_cop(saldo_real_ejecucion)}"
 
                 st.divider()
                 st.header("3. Emisión de Informe Ejecutivo en PDF")
                 lic_limpia_pdf = {k: ("N/A" if v is None else v) for k, v in licitacion_actual.items()}
                 lic_limpia_pdf["estampillas"] = resumen_tributario_pdf
-                
+
                 tipo_etiqueta = "UT/Consorcio" if tipo_figura != "INDIVIDUAL" else "Único"
                 dic_simulacion = {
                     "nombre_proponente": f"{nombre_proponente} ({tipo_etiqueta})",
@@ -1098,46 +1216,58 @@ def main():
                         file_name=f"Informe_{licitacion_actual.get('numero_proceso', '0')}_{nombre_proponente}.pdf",
                         mime="application/pdf", type="primary"
                     )
-                except Exception as e: st.error(f"Error PDF: {e}")
+                except Exception as e:
+                    st.error(f"Error PDF: {e}")
 
     # ------------------ PESTAÑA 2: DIRECTORIO Y EXPERIENCIAS RUP ------------------
     with tab_directorio:
         st.header("🏢 Directorio de Empresas y Portafolio de Experiencia RUP")
-        if not empresas_validas: st.warning("No hay empresas registradas.")
+        if not empresas_validas:
+            st.warning("No hay empresas registradas.")
         else:
             df_empresas = pd.DataFrame(empresas_validas)
             st.dataframe(df_empresas[["alias_codigo", "nit", "razon_social", "capital_trabajo"]].rename(columns={"alias_codigo": "Alias", "nit": "NIT", "razon_social": "Razón Social", "capital_trabajo": "Cap. Trabajo"}), use_container_width=True, hide_index=True)
             st.divider()
-            
-            st.subheader("🔍 Auditoría de Experiencia Contrato por Contrato")
+
+            st.subheader("🔍 Auditoría de Experiencia Contrato por Contrato (con Certificaciones PDF)")
             mapa_empresas = {e.get("alias_codigo", "S/N"): e for e in empresas_validas}
             alias_sel = st.selectbox("Selecciona empresa para ver sus contratos inscritos:", list(mapa_empresas.keys()), key="dir_exp_sel")
-            
+
             if alias_sel:
                 exps_filtradas = [ex for ex in experiencias_db if str(ex.get("alias_empresa", "")).strip().upper() == str(alias_sel).strip().upper()]
                 st.markdown(f"**Portafolio de Experiencia para: `{alias_sel}`** — Total contratos registrados: **{len(exps_filtradas)}**")
                 if exps_filtradas:
-                    df_exps_tabla = pd.DataFrame(exps_filtradas)[["numero_contrato", "entidad_contratante", "objeto_contrato", "valor_contrato_cop", "valor_smmlv", "anio_finalizacion"]]
-                    df_exps_tabla.columns = ["Nº Contrato", "Entidad", "Objeto", "Valor COP", "Valor SMMLV", "Año Fin"]
+                    df_exps_tabla = pd.DataFrame(exps_filtradas)
+                    cols_ex = [c for c in ["numero_contrato", "entidad_contratante", "objeto_contrato", "valor_contrato_cop", "valor_smmlv", "anio_finalizacion", "url_certificacion"] if c in df_exps_tabla.columns]
+                    df_exps_tabla = df_exps_tabla[cols_ex].rename(columns={
+                        "numero_contrato": "Nº Contrato", "entidad_contratante": "Entidad", "objeto_contrato": "Objeto",
+                        "valor_contrato_cop": "Valor COP", "valor_smmlv": "Valor SMMLV", "anio_finalizacion": "Año Fin", "url_certificacion": "Certificación PDF"
+                    })
                     df_exps_tabla["Valor COP"] = df_exps_tabla["Valor COP"].apply(formatear_moneda_cop)
-                    st.dataframe(df_exps_tabla, use_container_width=True, hide_index=True)
+                    st.dataframe(
+                        df_exps_tabla,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={"Certificación PDF": st.column_config.LinkColumn("Certificación PDF", display_text="📄 Ver PDF")}
+                    )
                 else:
-                    st.info("Esta empresa aún no tiene contratos de experiencia registrados en la plataforma. Utiliza el menú lateral para agregarlos.")
+                    st.info("Esta empresa aún no tiene contratos de experiencia registrados. Utiliza el menú lateral para agregarlos junto con su PDF.")
 
     # ------------------ PESTAÑA 3: DASHBOARD Y ESTADÍSTICAS ------------------
     with tab_dashboard:
         st.header("📈 Tablero Gerencial de Control y Estadísticas")
-        if not licitaciones_validas: st.info("Sin procesos cargados.")
+        if not licitaciones_validas:
+            st.info("Sin procesos cargados.")
         else:
             df_lic = pd.DataFrame(licitaciones_validas)
             df_lic["cuantia_num"] = pd.to_numeric(df_lic.get("cuantia_presupuesto", 0), errors="coerce").fillna(0)
-            
+
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Procesos Totales", len(df_lic))
             k2.metric("Presupuesto Evaluado", formatear_moneda_cop(df_lic["cuantia_num"].sum()))
             k3.metric("Activos / Viables", len(df_lic[df_lic["estado_revision"].isin(["Viable", "Alistamiento", "Presentacion"])]))
             k4.metric("Contratos RUP en Base", len(experiencias_db))
-            
+
             st.divider()
             c_d1, c_d2 = st.columns(2)
             with c_d1:
