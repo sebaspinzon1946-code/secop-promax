@@ -20,6 +20,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 from generador_pdf import generar_informe_ejecutivo_pdf, formatear_moneda_cop, formatear_indicador
+from escaner_economico import renderizar_modulo_escaner
 
 # =====================================================================
 # LISTAS OFICIALES Y CATÁLOGOS NORMATIVOS
@@ -1062,10 +1063,11 @@ def main():
     # =====================================================================
     # PANEL CENTRAL
     # =====================================================================
-    tab_eval, tab_directorio, tab_dashboard = st.tabs([
+  tab_eval, tab_directorio, tab_dashboard, tab_escaner = st.tabs([
         "⚖️ Evaluación y Matriz de Empresas",
         "🏢 Directorio y Experiencias RUP",
-        "📈 Dashboard y Estadísticas"
+        "📈 Dashboard y Estadísticas",
+        "🧾 Escáner Económico (Excel)"
     ])
 
     # ------------------ PESTAÑA 1: EVALUADOR Y MATRIZ MASIVA ------------------
@@ -1277,5 +1279,7 @@ def main():
                 st.subheader("👥 Carga por Responsable")
                 st.bar_chart(df_lic["responsable_proceso"].value_counts())
 
+with tab_escaner:
+        renderizar_modulo_escaner()
 if __name__ == "__main__":
     main()
