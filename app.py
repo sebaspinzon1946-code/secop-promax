@@ -1063,7 +1063,7 @@ def main():
     # =====================================================================
     # PANEL CENTRAL
     # =====================================================================
-  tab_eval, tab_directorio, tab_dashboard, tab_escaner = st.tabs([
+    tab_eval, tab_directorio, tab_dashboard, tab_escaner = st.tabs([
         "⚖️ Evaluación y Matriz de Empresas",
         "🏢 Directorio y Experiencias RUP",
         "📈 Dashboard y Estadísticas",
